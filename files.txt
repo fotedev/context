@@ -1,0 +1,6 @@
+C:\programming\Python\Projects\context\core\__init__.py
+C:\programming\Python\Projects\context\core\counter.py
+C:\programming\Python\Projects\context\core\judge.py
+C:\programming\Python\Projects\context\core\parser.py
+C:\programming\Python\Projects\context\aggregator.py
+C:\programming\Python\Projects\context\aggregator_tui.py

@@ -1,3 +1,4 @@
+# & C:\Users\FOTE\AppData\Local\Programs\Python\Python314\python.exe c:/programming/Python/Projects/context/aggregator.py
 """File Aggregator — consolidates source files and generates project trees.
 
 Outputs:
@@ -6,317 +7,78 @@ Outputs:
 """
 
 import sys
-import fnmatch
 from pathlib import Path
-from typing import List, Optional
 
-# ---------------------------------------------------------------------------
-# Module-level constants
-# ---------------------------------------------------------------------------
+# Reconfigure stdout/stderr to UTF-8 to prevent encoding errors on Windows terminals
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
 
-_ROOT_MARKERS: frozenset[str] = frozenset(
-    {"package.json", ".git", "requirements.txt", "pyproject.toml", "src"}
+
+# Import from core module package (for CLI execution and backwards compatibility with TUI/GUI)
+from core.parser import (
+    aggregate_files,
+    find_project_root,
+    generate_tree,
+    load_ignore_patterns,
+    read_file_paths,
+    should_ignore,
+    initialize_environment,
+    read_file_entries,
 )
-_DEFAULT_IGNORE: frozenset[str] = frozenset(
-    {
-        ".git",
-        "node_modules",
-        "dist",
-        "__pycache__",
-        ".next",
-        ".index_ignore",
-        "*.pyc",
-        ".DS_Store",
-    }
+from core.counter import count_tokens
+from core.judge import (
+    collect_model_responses,
+    build_compare_markdown,
+    generate_compare_template,
+    get_api_key,
+    get_gemini_verdict,
 )
-_MAX_TREE_DEPTH: int = 20
-
-
-# ---------------------------------------------------------------------------
-# Project root detection
-# ---------------------------------------------------------------------------
-
-
-def find_project_root(path: Path) -> Optional[Path]:
-    """Search parent directories for a recognised project-root marker.
-
-    Traversal starts at the parent of *path* and walks toward the
-    filesystem root.  The search stops at the first directory that
-    contains any marker in ``_ROOT_MARKERS``.
-
-    Args:
-        path: Any file path whose project root is required.
-
-    Returns:
-        The nearest ancestor directory containing a root marker,
-        or ``None`` if no marker is found.
-    """
-    current = path.resolve().parent
-
-    while True:
-        if any((current / marker).exists() for marker in _ROOT_MARKERS):
-            return current
-        parent = current.parent
-        if parent == current:       # filesystem root reached
-            return None
-        current = parent
-
-
-# ---------------------------------------------------------------------------
-# Display-path helpers
-# ---------------------------------------------------------------------------
-
-
-def get_display_path(path: Path, root: Optional[Path]) -> str:
-    """Return the shortest unambiguous display string for *path*.
-
-    Resolution order:
-    1. Relative to *root* (preferred).
-    2. Relative to the current working directory.
-    3. Absolute POSIX path as a last resort.
-
-    Args:
-        path: Absolute path of the file being displayed.
-        root: Detected project root, or ``None``.
-
-    Returns:
-        A forward-slash display string that uniquely identifies *path*.
-    """
-    abs_path = path.resolve()
-
-    for anchor in filter(None, [root, Path.cwd()]):
-        try:
-            return abs_path.relative_to(anchor).as_posix()
-        except ValueError:
-            continue
-
-    return abs_path.as_posix()
-
-
-# ---------------------------------------------------------------------------
-# Ignore-pattern management
-# ---------------------------------------------------------------------------
-
-
-def load_ignore_patterns(root: Optional[Path]) -> frozenset[str]:
-    """Load exclusion patterns from ``.index_ignore`` plus built-in defaults.
-
-    Args:
-        root: Project root to search for ``.index_ignore``.
-              Falls back to the current working directory when ``None``.
-
-    Returns:
-        Immutable set of glob patterns identifying paths to exclude.
-    """
-    extra: set[str] = set()
-    search_dir = root if root is not None else Path.cwd()
-    ignore_file = search_dir / ".index_ignore"
-
-    if ignore_file.is_file():
-        with ignore_file.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                stripped = line.strip()
-                if stripped and not stripped.startswith("#"):
-                    extra.add(stripped)
-
-    return _DEFAULT_IGNORE | frozenset(extra)
-
-
-def should_ignore(path: Path, root: Path, patterns: frozenset[str]) -> bool:
-    """Decide whether *path* matches any exclusion pattern.
-
-    Matching is performed against:
-    * The full POSIX relative path (e.g. ``src/utils/helper.py``).
-    * Each individual path component (e.g. ``src``, ``utils``, ``helper.py``).
-
-    Args:
-        path: Path to evaluate.
-        root: Project root used to compute the relative path.
-        patterns: Compiled set of glob patterns.
-
-    Returns:
-        ``True`` if *path* should be excluded from processing.
-    """
-    try:
-        rel = path.relative_to(root)
-    except ValueError:
-        return False    # outside root — never auto-ignore
-
-    rel_posix = rel.as_posix()
-
-    return any(
-        fnmatch.fnmatch(rel_posix, pat)
-        or any(fnmatch.fnmatch(part, pat) for part in rel.parts)
-        for pat in patterns
-    )
-
-
-# ---------------------------------------------------------------------------
-# Directory-tree generation
-# ---------------------------------------------------------------------------
-
-
-def generate_tree(
-    dir_path: Path,
-    root: Path,
-    patterns: frozenset[str],
-    prefix: str = "",
-    _depth: int = 0,
-) -> List[str]:
-    """Recursively build a visual directory tree.
-
-    Symbolic-link directories are listed but not descended into, preventing
-    infinite loops on circular links.  Traversal stops at ``_MAX_TREE_DEPTH``
-    regardless of structure depth.
-
-    Args:
-        dir_path: Directory to scan at the current recursion level.
-        root: Project root, used by :func:`should_ignore`.
-        patterns: Glob patterns identifying items to exclude.
-        prefix: Accumulated indentation string (internal, set by recursion).
-        _depth: Current recursion depth (internal, set by recursion).
-
-    Returns:
-        Lines forming the visual tree, without a trailing newline each.
-    """
-    if _depth > _MAX_TREE_DEPTH:
-        return [f"{prefix}... (max depth {_MAX_TREE_DEPTH} reached)"]
-
-    try:
-        items = sorted(
-            dir_path.iterdir(),
-            key=lambda p: (not p.is_dir(), p.name.lower()),
-        )
-        items = [i for i in items if not should_ignore(i, root, patterns)]
-    except PermissionError:
-        return [f"{prefix}[Permission Denied]"]
-
-    tree: List[str] = []
-    for index, item in enumerate(items):
-        is_last = index == len(items) - 1
-        connector = "└── " if is_last else "├── "
-        suffix = "/" if item.is_dir() else ""
-        tree.append(f"{prefix}{connector}{item.name}{suffix}")
-
-        if item.is_dir() and not item.is_symlink():
-            child_prefix = prefix + ("    " if is_last else "│   ")
-            tree.extend(
-                generate_tree(item, root, patterns, child_prefix, _depth + 1)
-            )
-
-    return tree
-
-
-# ---------------------------------------------------------------------------
-# File I/O
-# ---------------------------------------------------------------------------
-
-
-def read_file_paths(source_file: Path) -> List[Path]:
-    """Read one file path per line from a plain-text source file.
-
-    Blank lines and lines consisting only of whitespace are skipped.
-
-    Args:
-        source_file: Path to the text file listing source paths.
-
-    Returns:
-        Ordered list of :class:`~pathlib.Path` objects.
-
-    Raises:
-        FileNotFoundError: If *source_file* does not exist or is not a file.
-    """
-    if not source_file.is_file():
-        raise FileNotFoundError(f"Source paths file not found: {source_file}")
-
-    paths: List[Path] = []
-    with source_file.open("r", encoding="utf-8") as fh:
-        for line in fh:
-            stripped = line.strip()
-            if stripped:
-                paths.append(Path(stripped))
-
-    return paths
-
-
-def aggregate_files(
-    paths: List[Path],
-    output_file: Path,
-    root: Optional[Path],
-) -> None:
-    """Write each file's contents to *output_file* under a section header.
-
-    File content is read *before* any header is written, ensuring that a
-    read failure never leaves an orphaned header in the output.
-
-    Args:
-        paths: Ordered source file paths to aggregate.
-        output_file: Destination file; created or truncated on open.
-        root: Project root for :func:`get_display_path`, or ``None``.
-    """
-    with output_file.open("w", encoding="utf-8") as out:
-        for path in paths:
-            try:
-                if not path.is_file():
-                    print(f"ERROR: Not a file: {path}", file=sys.stderr)
-                    continue
-
-                # Read content first — header is only written on success.
-                content = path.read_text(encoding="utf-8")
-                display = get_display_path(path, root)
-
-                out.write(f"# --- FILE: {display} ---\n")
-                out.write(content)
-                if not content.endswith("\n"):
-                    out.write("\n")
-                out.write("\n")
-
-            except PermissionError as exc:
-                print(f"ERROR: Permission denied — {path}: {exc}", file=sys.stderr)
-            except UnicodeDecodeError as exc:
-                print(f"ERROR: Encoding error — {path}: {exc}", file=sys.stderr)
-            except OSError as exc:
-                print(f"ERROR: OS error — {path}: {exc}", file=sys.stderr)
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
 
 def _assert_writable(path: Path) -> None:
-    """Raise :exc:`OSError` if *path* cannot be opened for writing.
-
-    Args:
-        path: File path to probe.
-
-    Raises:
-        OSError: If the file cannot be opened in append mode.
-    """
+    """Raise OSError if path cannot be opened for writing."""
     try:
         path.open("a").close()
     except OSError as exc:
         raise OSError(f"Output file not writable: {path}") from exc
 
-
 def main() -> None:
     """Orchestrate project-root detection, tree generation, and aggregation."""
+    # Allow overriding the root directory via command line argument
+    cmd_root = Path(sys.argv[1]) if len(sys.argv) > 1 else None
+
+    # Initialize environment (files.txt, models/, prompt.txt)
+    init_root = cmd_root.resolve() if cmd_root else Path.cwd()
+    initialize_environment(init_root)
+
     files_txt = Path("files.txt")
     arena_txt = Path("arena.txt")
     structure_txt = Path("structure.txt")
+    compare_txt = Path("compare.md")
 
     try:
-        paths = read_file_paths(files_txt)
-        if not paths:
-            print("No paths found in files.txt — nothing to do.")
+        entries = read_file_entries(files_txt)
+        if not entries:
+            print("No entries found in files.txt — nothing to do.")
             return
 
         # Fail fast if outputs are not writable.
         _assert_writable(arena_txt)
         _assert_writable(structure_txt)
+        _assert_writable(compare_txt)
 
-        root = find_project_root(paths[0])
+        if cmd_root:
+            root = cmd_root.resolve()
+        else:
+            root = find_project_root(entries[0][0])
+        
         patterns = load_ignore_patterns(root)
+
+        # Count types for reporting
+        full_files = sum(1 for _, ranges, _ in entries if ranges is None)
+        snippets = sum(1 for _, ranges, important in entries if ranges is not None and not important)
+        important = sum(1 for _, ranges, imp in entries if ranges is not None and imp)
 
         # 1. Project tree
         if root:
@@ -329,10 +91,57 @@ def main() -> None:
         else:
             print("No project root detected — skipping structure.txt.", file=sys.stderr)
 
-        # 2. File aggregation
-        print(f"Aggregating {len(paths)} file(s) → {arena_txt} …")
-        aggregate_files(paths, arena_txt, root)
+        # 2. File aggregation (full files + snippets + important structures)
+        parts = []
+        if full_files:
+            parts.append(f"{full_files} file(s)")
+        if snippets:
+            parts.append(f"{snippets} snippet(s)")
+        if important:
+            parts.append(f"{important} structure(s)")
+        print(f"Aggregating {' + '.join(parts)} → {arena_txt} …")
+        aggregate_files(entries, arena_txt, root)
         print("Aggregation complete.")
+
+        # 3. Calculate and display token counts
+        try:
+            arena_content = arena_txt.read_text(encoding="utf-8")
+            token_count = count_tokens(arena_content)
+            print(f"Total size: {len(arena_content)} characters | Estimated tokens: {token_count}")
+        except Exception as exc:
+            print(f"Warning: Could not count tokens: {exc}")
+
+        # 4. Generate Compare from models/ dir or llm.txt (if exists) or template
+        prompt, models_data = collect_model_responses(root)
+        if models_data:
+            # Ask for AI Judge
+            judge_input = input("\nRun Gemini auto-comparison? [Y/n]: ").lower().strip()
+            run_judge = judge_input != 'n'
+            
+            verdict = None
+            if run_judge:
+                api_key = get_api_key(root)
+                if api_key:
+                    try:
+                        verdict = get_gemini_verdict(prompt, models_data, api_key)
+                        print("Gemini comparison evaluation generated successfully.")
+                    except Exception as e:
+                        print(f"Warning: Gemini evaluation failed ({e}). Falling back to manual template.")
+                else:
+                    print("API key skipped. Falling back to manual template.")
+
+            # Ask for compact mode
+            compact_input = input("Reduce tokens? (Compact mode, remove Notes) [y/N]: ").lower().strip()
+            compact = compact_input == 'y'
+            
+            build_compare_markdown(prompt, models_data, compare_txt, verdict=verdict, compact=compact)
+            src = "models/" if (root / "models").is_dir() else "llm.txt"
+            mode_str = " (COMPACT)" if compact else ""
+            judge_str = " with Gemini AI Judge" if verdict else ""
+            print(f"Compare generated from {src} → {compare_txt} ({len(models_data)} models){mode_str}{judge_str}")
+        else:
+            generate_compare_template(compare_txt)
+            print(f"No model responses found — default template → {compare_txt}")
 
     except Exception as exc:          # noqa: BLE001 — last-resort guard in main
         print(f"CRITICAL ERROR: {exc}", file=sys.stderr)

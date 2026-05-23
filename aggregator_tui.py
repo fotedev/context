@@ -6,6 +6,7 @@ Requires:    pip install textual
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import ClassVar
@@ -15,6 +16,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
+from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
     Checkbox,
@@ -22,7 +24,7 @@ from textual.widgets import (
     Header,
     Input,
     Label,
-    Log,
+    RichLog,
     Static,
 )
 
@@ -38,10 +40,14 @@ from aggregator import (  # noqa: E402
     read_file_paths,
     should_ignore,
 )
+from core.parser import read_file_entries
+from core.counter import count_tokens
+from core.judge import collect_model_responses, get_gemini_verdict, build_compare_markdown
 
 _FILES_TXT = _PROJECT_DIR / "files.txt"
 _ARENA_TXT = _PROJECT_DIR / "arena.txt"
 _STRUCTURE_TXT = _PROJECT_DIR / "structure.txt"
+_ENV_FILE = _PROJECT_DIR / ".env"
 
 _CSS = """
 Screen {
@@ -62,6 +68,14 @@ Screen {
 
 #path-input {
     width: 1fr;
+}
+
+#btn-set-root {
+    margin-left: 1;
+}
+
+#btn-clear-root {
+    margin-left: 1;
 }
 
 #body {
@@ -129,7 +143,57 @@ Button {
 TreeEntry {
     height: 1;
 }
+
+APIKeyModal {
+    align: center middle;
+}
+
+#api-key-dialog {
+    grid-size: 2;
+    grid-gutter: 1 2;
+    grid-rows: 1fr 3;
+    padding: 0 1;
+    width: 60;
+    height: 11;
+    border: thick $background 80%;
+    background: $surface;
+}
+
+#api-key-label {
+    column-span: 2;
+    height: 1fr;
+    width: 1fr;
+    content-align: center middle;
+}
+
+#api-key-input {
+    column-span: 2;
+}
+
+#btn-submit-key, #btn-cancel-key {
+    width: 100%;
+}
 """
+
+
+class APIKeyModal(ModalScreen[str | type(None)]):
+    """Modal dialog to request the Gemini API key."""
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="api-key-dialog"):
+            yield Label("GEMINI_API_KEY is missing.\nPlease enter it below to run the AI Judge:", id="api-key-label")
+            yield Input(placeholder="AIza...", id="api-key-input", password=True)
+            yield Button("Submit", variant="success", id="btn-submit-key")
+            yield Button("Cancel", variant="error", id="btn-cancel-key")
+
+    @on(Button.Pressed, "#btn-submit-key")
+    def submit_key(self) -> None:
+        key = self.query_one("#api-key-input", Input).value.strip()
+        self.dismiss(key if key else None)
+
+    @on(Button.Pressed, "#btn-cancel-key")
+    def cancel_key(self) -> None:
+        self.dismiss(None)
 
 
 class TreeEntry(Checkbox):
@@ -171,6 +235,8 @@ class AggregatorTUI(App[None]):
         with Horizontal(id="path-bar"):
             yield Static("Project Path:", id="path-label")
             yield Input(placeholder="Paste absolute path and press Enter", id="path-input")
+            yield Button("Set", id="btn-set-root", variant="primary")
+            yield Button("Clear", id="btn-clear-root", variant="warning")
 
         with Horizontal(id="body"):
             with Vertical(id="tree-panel"):
@@ -185,15 +251,36 @@ class AggregatorTUI(App[None]):
                         pass
 
                 with Vertical(id="log-panel"):
-                    yield Log(id="activity-log", auto_scroll=True)
+                    yield RichLog(id="activity-log", auto_scroll=True, markup=True)
 
         with Horizontal(id="controls"):
             yield Button("⟳  Refresh", id="btn-refresh", variant="default")
             yield Button("▶  Aggregate", id="btn-aggregate", variant="primary")
             yield Button("✕  Clear", id="btn-clear", variant="warning")
             yield Button("⏻  Quit", id="btn-quit", variant="error")
+            yield Checkbox("Run AI Judge", id="cb-judge", value=False)
+            yield Checkbox("Compact Mode", id="cb-compact", value=False)
 
         yield Footer()
+
+    def log_message(self, message: str, level: str = "info") -> None:
+        """Write a formatted message to the RichLog."""
+        log = self.query_one("#activity-log", RichLog)
+        color_map = {
+            "info": "cyan",
+            "success": "green",
+            "warning": "yellow",
+            "error": "red",
+            "action": "magenta",
+        }
+        color = color_map.get(level, "white")
+        formatted = f"[{color}]{message}[/{color}]"
+        import threading
+        if not hasattr(self, "_thread_id") or self._thread_id == threading.get_ident():
+            log.write(formatted)
+        else:
+            self.call_from_thread(log.write, formatted)
+
 
     def _detect_root(self) -> Path:
         """Return project root inferred from files.txt or current directory."""
@@ -210,15 +297,11 @@ class AggregatorTUI(App[None]):
                 pass
         return _PROJECT_DIR
 
-    @on(Input.Submitted, "#path-input")
-    def handle_path_submitted(self, event: Input.Submitted) -> None:
-        raw = event.value.strip()
-        log = self.query_one("#activity-log", Log)
-
+    def _set_manual_root_from_raw(self, raw: str) -> None:
         if not raw:
             self._manual_root = None
             self.action_refresh()
-            log.write_line("[tree] Manual path cleared.")
+            self.log_message("[tree] Manual path cleared.", "info")
             return
 
         candidate = Path(raw).expanduser()
@@ -228,16 +311,30 @@ class AggregatorTUI(App[None]):
             pass
 
         if not candidate.exists() or not candidate.is_dir():
-            log.write_line(f"[error] Invalid directory: {raw}")
+            self.log_message(f"[error] Invalid directory: {raw}", "error")
             return
 
         self._manual_root = candidate
         self.action_refresh()
-        log.write_line(f"[tree] Manual root set: {candidate}")
+        self.log_message(f"[tree] Manual root set: {candidate}", "success")
+
+    @on(Input.Submitted, "#path-input")
+    def handle_path_submitted(self, event: Input.Submitted) -> None:
+        self._set_manual_root_from_raw(event.value.strip())
+
+    @on(Button.Pressed, "#btn-set-root")
+    def handle_set_root_pressed(self) -> None:
+        raw = self.query_one("#path-input", Input).value.strip()
+        self._set_manual_root_from_raw(raw)
+
+    @on(Button.Pressed, "#btn-clear-root")
+    def handle_clear_root_pressed(self) -> None:
+        path_input = self.query_one("#path-input", Input)
+        path_input.value = ""
+        self._set_manual_root_from_raw("")
 
     def _load_tree(self) -> None:
         """Scan project directory and rebuild the tree panel."""
-        log = self.query_one("#activity-log", Log)
         scroll = self.query_one("#tree-scroll", ScrollableContainer)
         scroll.remove_children()
 
@@ -250,7 +347,7 @@ class AggregatorTUI(App[None]):
         patterns = load_ignore_patterns(root)
 
         self._populate_tree(scroll, root, root, patterns)
-        log.write_line(f"[tree] Loaded from: {root}")
+        self.log_message(f"[tree] Loaded from: {root}", "info")
 
     def _populate_tree(
         self,
@@ -300,42 +397,75 @@ class AggregatorTUI(App[None]):
         """Rebuild the queue panel from files.txt."""
         scroll = self.query_one("#queue-scroll", ScrollableContainer)
         title = self.query_one("#queue-title", Static)
-        log = self.query_one("#activity-log", Log)
 
         scroll.remove_children()
 
         if not _FILES_TXT.is_file():
             self._queue_count = 0
-            title.update("📋  Queue  (0 files)")
+            title.update("📋  Queue  (0 files | ~0 tokens | ~0 chars)")
             return
 
         try:
             paths = read_file_paths(_FILES_TXT)
         except Exception as exc:
-            log.write_line(f"[error] Could not read files.txt: {exc}")
+            self.log_message(f"[error] Could not read files.txt: {exc}", "error")
             return
 
         for path in paths:
             scroll.mount(Label(str(path)))
 
         self._queue_count = len(paths)
-        title.update(f"📋  Queue  ({self._queue_count} files)")
-        log.write_line(f"[queue] {self._queue_count} file(s) loaded.")
+        
+        # Trigger async token estimation
+        self._async_estimate_queue_tokens()
+
+    @work(thread=True, exclusive=True)
+    def _async_estimate_queue_tokens(self) -> None:
+        """Estimate tokens and chars for the current queue."""
+        if not _FILES_TXT.is_file():
+            return
+            
+        try:
+            entries = read_file_entries(_FILES_TXT)
+        except Exception:
+            return
+
+        total_chars = 0
+        
+        for path, line_ranges, _ in entries:
+            try:
+                if not path.is_file():
+                    continue
+                content = path.read_text(encoding="utf-8")
+                
+                if line_ranges is not None:
+                    from core.parser import extract_lines
+                    content = extract_lines(content, line_ranges)
+                    
+                total_chars += len(content)
+            except Exception:
+                pass
+
+        total_tokens = count_tokens("a" * total_chars) if total_chars else 0
+        
+        title = self.query_one("#queue-title", Static)
+        self.call_from_thread(title.update, f"📋  Queue  ({self._queue_count} files | ~{total_tokens:,} tokens | ~{total_chars:,} chars)")
 
     @on(Checkbox.Changed)
     def handle_checkbox(self, event: Checkbox.Changed) -> None:
         """Add or remove a file from files.txt when checked/unchecked."""
         if self._suppress_checkbox_events:
             return
+            
+        # Ignore non-TreeEntry checkboxes (like our new controls)
         if not isinstance(event.checkbox, TreeEntry):
             return
 
         entry = event.checkbox
-        log = self.query_one("#activity-log", Log)
 
         self._update_files_txt(entry.file_path, add=event.value)
         action = "Added" if event.value else "Removed"
-        log.write_line(f"[queue] {action}: {entry.file_path.name}")
+        self.log_message(f"[queue] {action}: {entry.file_path.name}", "action")
         self._load_queue()
 
     @on(Button.Pressed, "#btn-refresh")
@@ -351,8 +481,8 @@ class AggregatorTUI(App[None]):
         self.action_clear()
 
     @on(Button.Pressed, "#btn-quit")
-    def handle_quit(self) -> None:
-        self.action_quit()
+    async def handle_quit(self) -> None:
+        await self.action_quit()
 
     def action_refresh(self) -> None:
         """Manual refresh of tree and queue."""
@@ -362,15 +492,12 @@ class AggregatorTUI(App[None]):
     @work(thread=True)
     def action_aggregate(self) -> None:
         """Run aggregation in a background thread."""
-        log = self.query_one("#activity-log", Log)
-        self.call_from_thread(log.write_line, "[run] Starting aggregation…")
+        self.log_message("[run] Starting aggregation…", "action")
 
         try:
             paths = read_file_paths(_FILES_TXT)
             if not paths:
-                self.call_from_thread(
-                    log.write_line, "[warn] files.txt is empty — nothing to aggregate."
-                )
+                self.log_message("[warn] files.txt is empty — nothing to aggregate.", "warning")
                 return
 
             root = find_project_root(paths[0])
@@ -381,19 +508,73 @@ class AggregatorTUI(App[None]):
                     root, root, patterns
                 )
                 _STRUCTURE_TXT.write_text("\n".join(tree_lines), encoding="utf-8")
-                self.call_from_thread(log.write_line, "[ok] structure.txt written")
+                self.log_message("[ok] structure.txt written", "success")
 
-            aggregate_files(paths, _ARENA_TXT, root)
-            self.call_from_thread(
-                log.write_line, f"[ok] arena.txt written ({len(paths)} file(s))."
-            )
+            entries = read_file_entries(_FILES_TXT)
+            aggregate_files(entries, _ARENA_TXT, root)
+            self.log_message(f"[ok] arena.txt written ({len(paths)} file(s)).", "success")
+            
+            run_judge = self.query_one("#cb-judge", Checkbox).value
+            if run_judge:
+                self._check_and_run_judge(root)
 
         except FileNotFoundError:
-            self.call_from_thread(
-                log.write_line, "[error] files.txt not found — add files first."
-            )
+            self.log_message("[error] files.txt not found — add files first.", "error")
         except Exception as exc:
-            self.call_from_thread(log.write_line, f"[error] {exc}")
+            self.log_message(f"[error] {exc}", "error")
+
+    def _check_and_run_judge(self, root: Path | None) -> None:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            # Check env file in aggregator dir
+            from core.judge import load_dotenv
+            if root:
+                load_dotenv(root)
+            load_dotenv(Path.cwd())
+            load_dotenv(_PROJECT_DIR)
+            api_key = os.environ.get("GEMINI_API_KEY")
+            
+        if not api_key:
+            self.call_from_thread(self._prompt_for_key_and_run, root)
+        else:
+            self._run_judge_thread(root, api_key)
+
+    def _prompt_for_key_and_run(self, root: Path | None) -> None:
+        def check_key(key: str | None) -> None:
+            if key:
+                os.environ["GEMINI_API_KEY"] = key
+                try:
+                    with _ENV_FILE.open("a", encoding="utf-8") as f:
+                        f.write(f"\\nGEMINI_API_KEY={key}\\n")
+                    self.log_message("[key] API key saved to .env", "success")
+                except Exception as e:
+                    self.log_message(f"[error] Failed to save key: {e}", "warning")
+                    
+                self._run_judge_thread(root, key)
+            else:
+                self.log_message("[judge] API key is required to run the AI Judge.", "warning")
+                
+        self.app.push_screen(APIKeyModal(), check_key)
+
+    @work(thread=True)
+    def _run_judge_thread(self, root: Path | None, api_key: str) -> None:
+        self.log_message("[judge] Collecting model responses...", "action")
+        try:
+            prompt, models_data = collect_model_responses(root)
+            if not models_data:
+                self.log_message("[judge] No model responses found in models/ directory.", "warning")
+                return
+                
+            self.log_message(f"[judge] Found {len(models_data)} models. Requesting Gemini evaluation...", "action")
+            verdict = get_gemini_verdict(prompt, models_data, api_key)
+            
+            compact = self.query_one("#cb-compact", Checkbox).value
+            compare_file = (root or _PROJECT_DIR) / "compare.md"
+            build_compare_markdown(prompt, models_data, compare_file, verdict=verdict, compact=compact)
+            
+            self.log_message(f"[ok] AI Judge evaluation written to {compare_file.name}.", "success")
+        except Exception as exc:
+            self.log_message(f"[error] AI Judge failed: {exc}", "error")
 
     def action_clear(self) -> None:
         """Clear the queue and uncheck all checkboxes."""
@@ -406,8 +587,7 @@ class AggregatorTUI(App[None]):
         finally:
             self._suppress_checkbox_events = False
 
-        log = self.query_one("#activity-log", Log)
-        log.write_line("[queue] Cleared.")
+        self.log_message("[queue] Cleared.", "warning")
         self._load_queue()
 
     def _update_files_txt(self, path: Path, *, add: bool) -> None:
