@@ -135,7 +135,8 @@ def main() -> None:
             compact = compact_input == 'y'
             
             build_compare_markdown(prompt, models_data, compare_txt, verdict=verdict, compact=compact)
-            src = "models/" if (root / "models").is_dir() else "llm.txt"
+            target_root = root if root is not None else Path.cwd()
+            src = "models/" if (target_root / "models").is_dir() else "llm.txt"
             mode_str = " (COMPACT)" if compact else ""
             judge_str = " with Gemini AI Judge" if verdict else ""
             print(f"Compare generated from {src} → {compare_txt} ({len(models_data)} models){mode_str}{judge_str}")
