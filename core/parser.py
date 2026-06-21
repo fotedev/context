@@ -25,6 +25,7 @@ _DEFAULT_IGNORE: frozenset[str] = frozenset(
         ".vercel",
         ".cursor",
         ".vscode",
+        ".github",
         "compare_4.txt",
         "compare-template.bak",
         "compare_of_compare.txt",
@@ -44,6 +45,14 @@ _DEFAULT_IGNORE: frozenset[str] = frozenset(
         "models",
         ".pnpm-store",
         "desktop.ini",
+        "models\old",
+        "get-shit-done",
+        "gifts",
+        "agents",
+        ".agents",
+        ".agent",
+        "",
+        "",
 
     }
 )
