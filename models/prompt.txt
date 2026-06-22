@@ -10,7 +10,26 @@ CURRENT STATE:
 WHAT I WANT TO BUILD:
 1. OUTPUT ORGANIZATION: Instead of dumping arena.txt/structure.txt/compare.md in CWD, create a dedicated output folder (context_output/) to keep things clean.
 2. MULTI-FILE SUPPORT: Currently reads only files.txt. I want it to discover and process ALL files*.txt (files_1.txt, files_2.txt, etc.) — each gets its own arena/structure/compare outputs with matching suffix (arena_1.txt, compare_1.md, etc.).
-3. NON-INTERACTIVE MODE: Remove hardcoded input() prompts; make Gemini judge and compact mode CLI flags (--interactive to re-enable prompts). When --interactive IS enabled, use this prompt style:
+3. FLEXIBLE files.txt FORMAT: Support text/comments before and after file entries in files.txt. The parser should:
+   - Treat lines starting with `#` as comments (already works)
+   - Treat blank lines as separators (already works)
+   - Support a header section at the top (descriptions, notes, context about the problem)
+   - Support a footer section at the bottom (additional notes, reminders)
+   - Skip any line that doesn't look like a valid file path (no need for special markers — just detect if the line is a path or not)
+   - This way users can write自由 text in files.txt without breaking the tool
+   Example files.txt:
+   ```
+   # Bug in navbar layout
+   # The CSS grid is breaking on mobile
+   
+   C:/proj/src/components/Navbar.tsx
+   C:/proj/src/components/Navbar.module.css
+   C:/proj/src/layouts/MainLayout.tsx:45-80
+   
+   # TODO: also check the responsive breakpoints
+   # The issue only happens on screens < 768px
+   ```
+4. NON-INTERACTIVE MODE: Remove hardcoded input() prompts; make Gemini judge and compact mode CLI flags (--interactive to re-enable prompts). When --interactive IS enabled, use this prompt style:
    - Enter = default/skip, Space + Enter = opt-in. Doing nothing (Enter) skips the optional feature, Space opts in.
    - Interactive prompts in order:
      a. "Run Gemini auto-comparison? [Enter=skip, Space=run]: "

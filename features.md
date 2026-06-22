@@ -71,6 +71,30 @@ $ python aggregator.py
 → Done. No prompts.
 ```
 
+### Scenario 2b: Flexible files.txt Format
+
+```
+files.txt contains:
+# Bug in navbar layout
+# The CSS grid is breaking on mobile
+
+C:/proj/src/components/Navbar.tsx
+C:/proj/src/components/Navbar.module.css
+C:/proj/src/layouts/MainLayout.tsx:45-80
+
+# TODO: also check the responsive breakpoints
+# The issue only happens on screens < 768px
+
+→ Parser skips # comment lines
+→ Parser skips blank lines
+→ Parser extracts only valid file paths:
+   - C:/proj/src/components/Navbar.tsx (full file)
+   - C:/proj/src/components/Navbar.module.css (full file)
+   - C:/proj/src/layouts/MainLayout.tsx:45-80 (snippet)
+→ Comments/notes are ignored, tool works normally
+→ Users can write自由 text without breaking anything
+```
+
 ### Scenario 3: Interactive Run (--interactive flag)
 
 ```

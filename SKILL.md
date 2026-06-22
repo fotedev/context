@@ -45,14 +45,29 @@ If over budget, drop in this order: (1) Tier 4, (2) less-implicated Tier 3, (3) 
 For runtime errors, type mismatches from a library, or dependency version conflicts: add small, high-signal `node_modules` files only when directly relevant and within budget (e.g., `node_modules/<pkg>/package.json`, `node_modules/<pkg>/**/*.d.ts`). Use line-range syntax for large files, or present them in chat under Extra Context.
 ## Output Format
 ### files.txt Entry Syntax
-Each line is an absolute path formatted for the user's OS, one entry per line, no quotes, no bullets.
+Each line is an absolute path formatted for the user's OS, one entry per line, no quotes, no bullets. Comments and context from the user's prompt should be included as `#` prefixed lines.
 | Format | Meaning | Linux example | Windows example |
 |---|---|---|---|
 | `!/abs/path/file.py:start-end` | Important structure | `!/home/proj/src/types.ts:1-30` | `!C:/proj/src/types.ts:1-30` |
 | `/abs/path/file.py:start-end` | Code snippet | `/home/proj/src/app.tsx:45-80` | `C:/proj/src/app.tsx:45-80` |
 | `/abs/path/file.py:s-e,s2-e2` | Multi-range snippet | `/home/proj/src/large.py:10-20,50-60` | `C:/proj/src/large.py:10-20,50-60` |
 | `/abs/path/file.py` | Full file | `/home/proj/src/utils.ts` | `C:/proj/src/utils.ts` |
-Line numbers are 1-indexed and inclusive. The `!` prefix marks structural highlights. Comment lines starting with `#` are ignored.
+| `# comment text` | Context from user prompt | `# Navbar layout broken on mobile` | `# Navbar layout broken on mobile` |
+Line numbers are 1-indexed and inclusive. The `!` prefix marks structural highlights. Comment lines starting with `#` are ignored by the aggregator but provide context for anyone reading files.txt.
+
+### files.txt Structure
+Put comments from the user's prompt at the top of files.txt as context:
+```
+# User problem: Navbar.tsx layout is broken
+# The CSS grid is breaking on mobile screens < 768px
+# Error: Cannot read property 'style' of undefined
+
+C:/proj/src/components/Navbar.tsx
+C:/proj/src/components/Navbar.module.css
+C:/proj/src/layouts/MainLayout.tsx:45-80
+!C:/proj/src/types/nav.ts:1-15
+```
+This way files.txt is self-documenting — anyone reading it knows what problem it addresses.
 ### Report Format
 After writing `./files.txt`, always reply with:
 ✅ **./files.txt updated** — [N] files, [S] snippets, [I] structures selected for [problem summary]
@@ -75,6 +90,9 @@ Copy this block alongside arena.txt into LMArena.
 User: "Navbar.tsx layout is broken"
 **files.txt (Linux):**
 ```
+# User problem: Navbar.tsx layout is broken
+# CSS grid breaking on mobile screens < 768px
+
 /home/proj/src/components/Navbar.tsx
 /home/proj/src/components/Navbar.module.css
 /home/proj/src/layouts/MainLayout.tsx:45-80
@@ -82,6 +100,9 @@ User: "Navbar.tsx layout is broken"
 ```
 **files.txt (Windows):**
 ```
+# User problem: Navbar.tsx layout is broken
+# CSS grid breaking on mobile screens < 768px
+
 C:/proj/src/components/Navbar.tsx
 C:/proj/src/components/Navbar.module.css
 C:/proj/src/layouts/MainLayout.tsx:45-80
@@ -93,12 +114,18 @@ Adding the entire `src/` directory or editing code to fix the layout both go bey
 User: "Type error mentions next-auth Session"
 **files.txt (Linux):**
 ```
+# User problem: Type error mentions next-auth Session
+# TypeError: Cannot read property 'user' of undefined
+
 /home/proj/src/lib/auth.ts
 /home/proj/src/app/api/auth/[...nextauth]/route.ts
 !/home/proj/node_modules/next-auth/index.d.ts:45-75
 ```
 **files.txt (Windows):**
 ```
+# User problem: Type error mentions next-auth Session
+# TypeError: Cannot read property 'user' of undefined
+
 C:/proj/src/lib/auth.ts
 C:/proj/src/app/api/auth/[...nextauth]/route.ts
 !C:/proj/node_modules/next-auth/index.d.ts:45-75
@@ -109,12 +136,18 @@ Adding `node_modules/next-auth/` recursively overwhelms the size budget. Use tar
 User: "The `processOrder` function in `orders.ts` has a bug"
 **files.txt (Linux):**
 ```
+# User problem: processOrder function in orders.ts has a bug
+# Order total is calculated incorrectly when discount is applied
+
 /home/proj/src/services/orders.ts:120-180
 /home/proj/src/services/orders.ts:1-30,200-220
 !/home/proj/src/types/order.ts:1-40
 ```
 **files.txt (Windows):**
 ```
+# User problem: processOrder function in orders.ts has a bug
+# Order total is calculated incorrectly when discount is applied
+
 C:/proj/src/services/orders.ts:120-180
 C:/proj/src/services/orders.ts:1-30,200-220
 !C:/proj/src/types/order.ts:1-40
