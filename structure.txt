@@ -1,42 +1,19 @@
 Project Root: context/
-├── .contextignore
-├── .context/
-│   └── settings.json
+├── core/
+│   ├── __init__.py
+│   ├── counter.py
+│   ├── judge.py
+│   └── parser.py
+├── temp/
+│   └── s
 ├── .env
 ├── .env.example
 ├── .gitignore
 ├── aggregator.py
 ├── aggregator_gui.py
 ├── aggregator_tui.py
-├── core/
-│   ├── __init__.py
-│   ├── counter.py
-│   ├── judge.py
-│   └── parser.py
+├── context.txt
 ├── features.md
-├── files.txt
-├── files_1.txt
-├── files_2.txt
-├── models/
-│   ├── A.txt
-│   ├── A_NOTES.txt
-│   ├── ARCHIVE/
-│   │   ├── A_20260622_143022.txt
-│   │   └── B_20260622_143022.txt
-│   ├── B.txt
-│   ├── B_NOTES.txt
-│   ├── C.txt
-│   ├── D.txt
-│   └── prompt.txt
-├── context_output/
-│   ├── arena.txt
-│   ├── arena_1.txt
-│   ├── arena_2.txt
-│   ├── compare.md
-│   ├── compare_1.md
-│   ├── compare_2.md
-│   ├── structure.txt
-│   ├── structure_1.txt
-│   └── structure_2.txt
 ├── README.md
-└── SKILL.md
+├── SKILL.md
+└── temp-context.txt
