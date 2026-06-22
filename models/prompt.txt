@@ -1,36 +1,30 @@
-Act as an expert Senior Python Developer and TUI (Terminal User Interface) Architect. I have refactored my project core logic into modular files under the `core/` directory, and I need to completely integrate these functionalities into my TUI application (`aggregator_tui.py`) seamlessly.
+I have a Python CLI tool called "context" (arena-context skill). It aggregates source files for LMArena blind pairwise comparisons.
 
-Your task is to analyze the project structure and fully implement the backend orchestration within the TUI codebase.
+CURRENT STATE:
+- aggregator.py: Main entry point. Reads files.txt, generates arena.txt (aggregated code), structure.txt (project tree), compare.md (model comparison).
+- core/parser.py: File parsing, path resolution, tree generation, ignore patterns.
+- core/counter.py: Token counting.
+- core/judge.py: Gemini AI judge integration for auto-comparison.
 
-Please perform the following steps:
-1. **Analyze the Modular Architecture:** Identify how `aggregator_tui.py` should import and utilize the core modules from `core/` (specifically `parser.py` for file/snippet aggregation and ignore patterns, `counter.py` for the token counter, and `judge.py` for the Gemini Flash AI Judge integration).
-2. **Asynchronous/Threaded Integration:** Port and trigger the backend workflows (file parsing, token counting, and API judging) within the TUI structure. Ensure that heavy operations run asynchronously (using Python's `asyncio` if utilizing a framework like Textual, or standard `threading`) so the terminal UI remains highly responsive and doesn't freeze or lag during execution.
-3. **Map TUI Components & Interactions:** Map the backend data to the reactive TUI components:
-   - Bind the interactive File Tree and Checkboxes to the target file list configuration.
-   - Route live status updates and execution progress to the active terminal logging/status widget.
-   - Ensure the terminal shortcuts ('r' to refresh, 'a' to aggregate/evaluate, 'c' to clear, 'q' to quit) trigger their respective backend tasks properly.
-4. **Robust Terminal Error Handling:** Implement comprehensive try-except blocks for file system IO operations and API failures. Display clean, non-intrusive error highlights or success notifications directly inside the TUI viewport.
+WHAT I WANT TO BUILD:
+1. OUTPUT ORGANIZATION: Instead of dumping arena.txt/structure.txt/compare.md in CWD, create a dedicated output folder (e.g., context_output/) to keep things clean.
+2. MULTI-FILE SUPPORT: Currently reads only files.txt. I want it to discover and process ALL files*.txt (files_006.txt, files_007.txt, etc.) — each gets its own arena/structure/compare outputs.
+3. NON-INTERACTIVE MODE: Remove hardcoded input() prompts; make Gemini judge and compact mode CLI flags (--interactive to re-enable prompts). When --interactive IS enabled, change the prompt behavior:
+   - Gemini judge prompt: pressing Enter (no input) = skip judge, pressing Space then Enter = run judge.
+   - Compact mode prompt: pressing Enter (no input) = skip compact, pressing Space then Enter = enable compact.
+   Basically: Enter = default/skip, Space = opt-in. This is reversed from typical y/N — the idea is that doing nothing (Enter) skips the optional feature, and actively pressing Space opts in.
+4. CONFIGURABLE IGNORE PATTERNS: Currently `_DEFAULT_IGNORE` in parser.py is a hardcoded frozenset. I want the script to:
+   - Look for a `.conignore` file (simple name, easy to type) in the project root.
+   - If `.conignore` doesn't exist, create it with a default template showing example patterns (comments start with #, one pattern per line).
+   - Merge `.conignore` patterns with built-in defaults at runtime.
+   - This replaces the current `.index_ignore` file support (or coexist — your call, but `.conignore` should be the primary).
 
-Please provide the fully updated `aggregator_tui.py` code, cleanly structured, modularized with our `core/` components, and professionally commented.
+ABOUT COMPACT MODE (for context): Compact mode in core/judge.py's build_compare_markdown() does: (1) removes "### Notes" sections under each model response, (2) collapses multiple blank lines into single newlines, (3) trims trailing whitespace. It's a token saver for pasting compare.md into LMArena — less formatting, just responses + verdict.
 
-==
-Project Root: context/
-├── core/
-│   ├── __init__.py
-│   ├── counter.py
-│   ├── judge.py
-│   └── parser.py
-├── .env
-├── .env.example
-├── .gitignore
-├── aggregator.py
-├── aggregator_gui.py
-├── aggregator_tui.py
-└── SKILL.md
-==
-C:\programming\Python\Projects\context\core\__init__.py
-C:\programming\Python\Projects\context\core\counter.py
-C:\programming\Python\Projects\context\core\judge.py
-C:\programming\Python\Projects\context\core\parser.py
-C:\programming\Python\Projects\context\aggregator.py
-C:\programming\Python\Projects\context\aggregator_tui.py
+CONSTRAINTS:
+- Keep backwards compatibility — running with no args should still work (auto-discover files*.txt).
+- Output folder name should be configurable via --output flag.
+- Add context_output to ignore patterns so it doesn't appear in project trees.
+- Don't break existing core/parser.py, core/counter.py, core/judge.py APIs.
+
+DELIVERABLE: Updated aggregator.py with multi-file discovery, organized output, and CLI flags. Updated core/parser.py for .conignore support with default template generation. Minimal changes to core/ modules.

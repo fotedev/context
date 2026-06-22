@@ -12,4 +12,7 @@ Project Root: context/
 ├── aggregator.py
 ├── aggregator_gui.py
 ├── aggregator_tui.py
+├── context.txt
+├── features.md
+├── README.md
 └── SKILL.md
