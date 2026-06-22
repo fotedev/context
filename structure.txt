@@ -15,8 +15,8 @@ Project Root: context/
 │   └── parser.py
 ├── features.md
 ├── files.txt
-├── files_006.txt
-├── files_007.txt
+├── files_1.txt
+├── files_2.txt
 ├── models/
 │   ├── A.txt
 │   ├── A_NOTES.txt
@@ -30,13 +30,13 @@ Project Root: context/
 │   └── prompt.txt
 ├── context_output/
 │   ├── arena.txt
-│   ├── arena_006.txt
-│   ├── arena_007.txt
+│   ├── arena_1.txt
+│   ├── arena_2.txt
 │   ├── compare.md
-│   ├── compare_006.md
-│   ├── compare_007.md
+│   ├── compare_1.md
+│   ├── compare_2.md
 │   ├── structure.txt
-│   ├── structure_006.txt
-│   └── structure_007.txt
+│   ├── structure_1.txt
+│   └── structure_2.txt
 ├── README.md
 └── SKILL.md

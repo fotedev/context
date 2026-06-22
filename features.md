@@ -9,9 +9,9 @@ project/
 ├── .context/
 │   └── settings.json          # persistent preferences
 ├── .contextignore                # custom ignore patterns
-├── files.txt                   # input: file paths
-├── files_006.txt               # input: more file paths (optional)
-├── files_007.txt               # input: more file paths (optional)
+├── files.txt                   # input: file paths (main)
+├── files_1.txt                 # input: file paths (set 1)
+├── files_2.txt                 # input: file paths (set 2)
 ├── models/
 │   ├── prompt.txt              # prompt for LMArena
 │   ├── A.txt                   # model A response
@@ -25,13 +25,15 @@ project/
 │       └── B_20260622_143022.txt
 ├── context_output/             # all generated outputs
 │   ├── arena.txt               # aggregated code from files.txt
-│   ├── arena_006.txt           # aggregated code from files_006.txt
-│   ├── arena_007.txt           # aggregated code from files_007.txt
+│   ├── arena_1.txt             # aggregated code from files_1.txt
+│   ├── arena_2.txt             # aggregated code from files_2.txt
 │   ├── structure.txt           # project tree from files.txt
-│   ├── structure_006.txt       # project tree from files_006.txt
-│   ├── structure_007.txt       # project tree from files_007.txt
+│   ├── structure_1.txt         # project tree from files_1.txt
+│   ├── structure_2.txt         # project tree from files_2.txt
 │   ├── compare.md              # model comparison (or .txt)
-│   └── compare_006.md          # model comparison per input file
+│   ├── compare_1.md            # model comparison for files_1.txt
+│   └── compare_2.md            # model comparison for files_2.txt
+├── .env                        # GEMINI_API_KEY (tool root, not project)
 └── aggregator.py               # main script
 ```
 
@@ -60,7 +62,7 @@ $ python aggregator.py
 
 → Reads .context/settings.json
 → Skips all prompts (gemini_judge=false, compact_mode=false, etc.)
-→ Discovers files*.txt (files.txt, files_006.txt, files_007.txt)
+→ Discovers files*.txt (files.txt, files_1.txt, files_2.txt)
 → For each input file:
    - Generates arena_XXX.txt
    - Generates structure_XXX.txt
@@ -90,14 +92,14 @@ $ python aggregator.py --interactive
 ```
 $ python aggregator.py
 
-→ Discovers: files.txt, files_006.txt, files_007.txt
+→ Discovers: files.txt, files_1.txt, files_2.txt
 → For each:
-   files.txt      → context_output/arena.txt
-                    context_output/structure.txt
-   files_006.txt  → context_output/arena_006.txt
-                    context_output/structure_006.txt
-   files_007.txt  → context_output/arena_007.txt
-                    context_output/structure_007.txt
+   files.txt    → context_output/arena.txt
+                  context_output/structure.txt
+   files_1.txt  → context_output/arena_1.txt
+                  context_output/structure_1.txt
+   files_2.txt  → context_output/arena_2.txt
+                  context_output/structure_2.txt
 → Single compare.md for all (or per-file if preferred)
 ```
 
@@ -196,3 +198,29 @@ $ python aggregator.py
 |--------|-------------|-------------|----------|
 | `.md` (default) | `compare.md` | `A_NOTES.md` | Markdown with formatting |
 | `.txt` | `compare.txt` | `A_NOTES.txt` | Plain text, fewer tokens |
+
+## Edge Cases
+
+| Case | Behavior |
+|------|----------|
+| Empty `files.txt` | Create empty templates (arena.txt, structure.txt, compare.md) in output folder |
+| Invalid `settings.json` | Fall back to defaults, print warning every run |
+| Empty `settings.json` | Print: "Use context skill with AI model to set up preferences" |
+| Missing `settings.json` | Auto-create with defaults |
+| `model_count=4` but only 2 files | Auto-create empty C.txt, D.txt, prompt user to paste |
+| Archive timestamp collision | Append `_1`, `_2`, etc. |
+| `context_output/` has old files | Warn: "Merge? [Enter=merge, Space=skip]" |
+| Gemini API key not set | Warn and skip judge (don't error) |
+| Notes extension mismatch | Only match chosen output extension |
+| Old files in CWD | Warn: "Clean? [Enter=clean, Space=skip]" |
+
+## Project Root Detection
+
+The tool detects the project root using `find_project_root()` in parser.py:
+- Starts from the first file path in files.txt
+- Searches parent directories for markers: `.git`, `package.json`, `pyproject.toml`, `requirements.txt`, `src`
+- Falls back to CWD if no markers found
+
+## API Key Location
+
+The `.env` file with `GEMINI_API_KEY` lives in the **tool root directory** (where aggregator.py is), NOT in the user's project directory. This keeps the tool's config separate from the user's codebase.
