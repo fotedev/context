@@ -1,140 +1,198 @@
-# ContextForge - Organized Features
+# Context Tool — Feature Structure
 
-A prioritized list of features for the ContextForge tool (a CLI/GUI tool that aggregates code context for LLMs with a Gemini AI Judge).
+CLI tool that aggregates source files for LMArena blind pairwise comparisons.
 
-## Tier 1: Critical (Core Foundation)
+## Directory Structure (after first run)
+        
+```
+project/
+├── .context/
+│   └── settings.json          # persistent preferences
+├── .contextignore                # custom ignore patterns
+├── files.txt                   # input: file paths
+├── files_006.txt               # input: more file paths (optional)
+├── files_007.txt               # input: more file paths (optional)
+├── models/
+│   ├── prompt.txt              # prompt for LMArena
+│   ├── A.txt                   # model A response
+│   ├── B.txt                   # model B response
+│   ├── C.txt                   # model C response (if 4 models)
+│   ├── D.txt                   # model D response (if 4 models)
+│   ├── A_NOTES.txt             # notes for model A (optional)
+│   ├── B_NOTES.txt             # notes for model B (optional)
+│   └── ARCHIVE/                # archived responses
+│       ├── A_20260622_143022.txt
+│       └── B_20260622_143022.txt
+├── context_output/             # all generated outputs
+│   ├── arena.txt               # aggregated code from files.txt
+│   ├── arena_006.txt           # aggregated code from files_006.txt
+│   ├── arena_007.txt           # aggregated code from files_007.txt
+│   ├── structure.txt           # project tree from files.txt
+│   ├── structure_006.txt       # project tree from files_006.txt
+│   ├── structure_007.txt       # project tree from files_007.txt
+│   ├── compare.md              # model comparison (or .txt)
+│   └── compare_006.md          # model comparison per input file
+└── aggregator.py               # main script
+```
 
-These features are essential and form the backbone of the product.
+---
 
-1. **Local Python Server (FastAPI)**
-   - Runs on `localhost:8080` (or similar port)
-   - Serves `arena.txt` content to consumers
-   - Health check endpoint
-   - CORS configured to allow only the extension ID
-   - **Why critical:** Foundation for the browser extension and any other interface that needs to consume context remotely.
+## Scenarios
 
-2. **Browser Extension (Chrome Manifest V3)**
-   - Content Script auto-injects context into LLM sites (LMArena, ChatGPT, Claude)
-   - Detects the active LLM provider and pastes in the correct field
-   - Uses `nativeInputValueSetter` + dispatched `input` event to bypass React/Vue controlled inputs
-   - **Why critical:** This is the main UX differentiator. Transforms the tool from "developer utility" to "one-click product."
+### Scenario 1: First Run (no settings, no .context/)
 
-3. **Auto-Paste (Zero-Click Experience)**
-   - On page load, fetch context from local server and paste into the active textarea
-   - Optional: auto-click submit button
-   - **Why critical:** Core value proposition; eliminates copy/paste friction.
+```
+$ python aggregator.py
 
-4. **Core CLI (`agg`)**
-   - File aggregation engine (reads `files.txt`)
-   - Generates `structure.txt` (project tree)
-   - Token counting with `tiktoken`
-   - Produces `arena.txt`
-   - **Why critical:** This is the original tool and the source of truth that all other interfaces consume.
+→ Creates .context/settings.json with defaults
+  "Created .context/settings.json — edit your preferences or delete to reset."
+→ Creates .contextignore with default template
+→ Creates files.txt if missing
+→ Reads settings.json → uses defaults
+→ Processes files.txt
+→ Outputs to context_output/
+```
 
-5. **Gemini AI Judge (Model Comparison)**
-   - Takes two model responses and evaluates them
-   - Outputs verdict in `compare.md`
-   - Uses user's own `GEMINI_API_KEY` (no server cost)
-   - **Why critical:** Signature feature that justifies the product's existence.
+### Scenario 2: Normal Run (settings exist)
 
-## Tier 2: High Value (Major UX Improvements)
+```
+$ python aggregator.py
 
-6. **Watch Mode (`agg --watch`)**
-   - Server monitors file changes
-   - On save (Ctrl+S), auto-rebuilds `arena.txt`
-   - Extension auto-refreshes the pasted context
-   - **Why high value:** Eliminates repeated manual rebuilds. Alone justifies a Pro tier.
+→ Reads .context/settings.json
+→ Skips all prompts (gemini_judge=false, compact_mode=false, etc.)
+→ Discovers files*.txt (files.txt, files_006.txt, files_007.txt)
+→ For each input file:
+   - Generates arena_XXX.txt
+   - Generates structure_XXX.txt
+→ Generates compare.md (or .txt per settings)
+→ Merges A_NOTES.txt, B_NOTES.txt if they exist
+→ Done. No prompts.
+```
 
-7. **TUI (Terminal UI)**
-   - Interactive terminal interface for users who prefer keyboard navigation
-   - Uses the same core logic as CLI
-   - **Why high value:** Captures "terminal junkie" developer segment.
+### Scenario 3: Interactive Run (--interactive flag)
 
-8. **GUI (Graphical UI)**
-   - File picker, visual structure tree, token visualization
-   - Window-based interaction
-   - **Why high value:** Lowers barrier for non-terminal users; great for marketing screenshots.
+```
+$ python aggregator.py --interactive
 
-9. **Smart Clipboard (Auto-Copy)**
-   - After `agg` runs, automatically copy `arena.txt` to OS clipboard
-   - Print "Context copied! Ready to paste."
-   - **Why high value:** 5-minute implementation with instant UX win for users who skip the extension.
+→ Reads settings.json as defaults
+→ Shows all prompts:
+   1. "Run Gemini auto-comparison? [Enter=skip, Space=run]: "
+   2. "Reduce tokens? Compact mode [Enter=skip, Space=enable]: "
+   3. "Archive model responses? [Enter=no, Space=archive]: "
+   4. "How many models? [Enter=2, Space=4]: "
+   5. "Output format? [Enter=.md, Space=.txt]: "
+→ User choices override settings.json (but don't save back)
+→ Processes as normal
+```
 
-10. **Two-Way Sync (Export Code)**
-    - Extension reads AI response from the page
-    - Sends generated code to local server
-    - Server creates the actual files in the project folder
-    - **Why high value:** "Killer feature" for Pro tier. Solves the reverse pain point (AI output back to disk).
+### Scenario 4: Multi-File Run
 
-## Tier 3: Power User Features
+```
+$ python aggregator.py
 
-11. **Smart Auto-Context (Git-based)**
-    - `agg-smart` command
-    - Reads `git diff` / staged files automatically
-    - Zero configuration required
-    - **Why valuable:** Removes the need to maintain `files.txt`.
+→ Discovers: files.txt, files_006.txt, files_007.txt
+→ For each:
+   files.txt      → context_output/arena.txt
+                    context_output/structure.txt
+   files_006.txt  → context_output/arena_006.txt
+                    context_output/structure_006.txt
+   files_007.txt  → context_output/arena_007.txt
+                    context_output/structure_007.txt
+→ Single compare.md for all (or per-file if preferred)
+```
 
-12. **Direct API Mode (Bypass Browser)**
-    - User puts OpenAI/Anthropic keys in `.env`
-    - `agg --arena` sends context to both models directly
-    - Gemini judges, output printed to terminal + `compare.md`
-    - **Why valuable:** Power users who don't want to use a browser at all.
+### Scenario 5: Archive Flow
 
-13. **Auto-Judge**
-    - Extension reads both model responses after they finish
-    - Sends them to the local server
-    - Server returns Gemini's verdict as a browser notification
-    - **Why valuable:** Closes the loop fully automatically.
+```
+$ python aggregator.py --interactive
 
-14. **VS Code Extension**
-    - Right-click in VS Code → "Add to Context"
-    - Replaces manual `files.txt` editing
-    - Connects to the same local server
-    - **Why valuable:** More natural integration point for developers than a browser.
+→ Prompt 3: "Archive model responses? [Space=archive]"
+→ User presses Space
+→ Script saves:
+   models/ARCHIVE/A_20260622_143022.txt
+   models/ARCHIVE/B_20260622_143022.txt
+→ Re-asks: "How many models? [Enter=2, Space=4]"
+→ User can now pick different subset from archive
+→ Generates compare.md from selected models
+```
 
-15. **Multi-Provider Support**
-    - Extension detects which LLM site is active (LMArena, ChatGPT, Claude, Gemini)
-    - Knows the correct textarea selector for each
-    - **Why valuable:** Removes per-site manual config.
+### Scenario 6: Custom Output Directory
 
-## Tier 4: Nice-to-Have (Polish & Quality of Life)
+```
+$ python aggregator.py --output my_folder
 
-16. **Prompt Snippets Library**
-    - Predefined prompts: "Refactor", "Find bugs", "Write tests"
-    - Dropdown in extension adds the prompt above the pasted context
-    - **Why nice:** Saves typing; makes the tool feel like a personal assistant.
+→ All outputs go to my_folder/ instead of context_output/
+→ settings.json "output_dir" is overridden by flag
+```
 
-17. **HTML Report Export**
-    - Beautiful, interactive HTML file with side-by-side comparison
-    - Syntax highlighting, token counts, verdict
-    - **Why nice:** Visual output; shareable artifacts.
+### Scenario 7: Notes Auto-Merge
 
-18. **Cost Calculator**
-    - Estimates API cost based on token count and selected model
-    - **Why nice:** Helps users budget their AI usage.
+```
+models/A_NOTES.txt contains:
+"Model A used a recursive approach which is cleaner."
 
-19. **Incremental Aggregation via Git**
-    - Only re-aggregates changed files
-    - Faster rebuilds for large projects
-    - **Why nice:** Performance optimization.
+→ In compare.md, under Model A's response:
+   ### Notes
+   Model A used a recursive approach which is cleaner.
 
-## Tier 5: Monetization Infrastructure
+→ If A_NOTES.txt doesn't exist → no Notes section for A
+```
 
-20. **License Key System**
-    - `agg-activate xxxx-xxxx-xxxx-xxxx`
-    - Verifies key via LemonSqueezy API
-    - Stores in hidden `.context_license` file
-    - Unlocks Pro features (GUI, TUI, AI Judge, Extension)
-    - **Why needed:** Required to actually sell the Pro version.
+### Scenario 8: Compact Mode
 
-## Suggested Work Order
+```
+settings.json: "compact_mode": true
 
-1. Stabilize CLI + ensure `core` logic is framework-agnostic (Headless Architecture)
-2. Add Smart Clipboard (quick win)
-3. Build Local FastAPI Server
-4. Build Chrome Extension with Auto-Paste
-5. Add Watch Mode
-6. Build TUI and GUI
-7. Implement License Key system
-8. Add Two-Way Sync, Smart Auto-Context, Direct API Mode (Pro tier)
-9. Ship VS Code Extension, HTML Reports, Prompt Library
+→ compare.md generated with:
+   - No "### Notes" sections
+   - Collapsed blank lines
+   - Trimmed whitespace
+→ Token count reduced ~15-20%
+```
+
+### Scenario 9: No Model Files Exist
+
+```
+$ python aggregator.py
+
+→ models/ is empty (no A.txt, B.txt)
+→ Auto-creates: A.txt, B.txt (empty)
+→ Prompts: "How many model files to create?"
+→ User enters 4 → creates A.txt, B.txt, C.txt, D.txt
+```
+
+---
+
+## CLI Flags
+
+| Flag | Effect |
+|------|--------|
+| `--interactive` | Show all prompts, ignore settings.json preferences |
+| `--output DIR` | Custom output directory |
+| (no args) | Read settings.json, auto-discover files*.txt, run silently |
+
+## Settings.json Keys
+
+| Key | Default | Options |
+|-----|---------|---------|
+| `output_dir` | `"context_output"` | any folder name |
+| `output_format` | `"md"` | `"md"` or `"txt"` |
+| `model_count` | `2` | `2` or `4` |
+| `gemini_judge` | `false` | `true` / `false` |
+| `compact_mode` | `false` | `true` / `false` |
+| `archive` | `false` | `true` / `false` |
+| `archive_dir` | `"models/ARCHIVE"` | any folder name |
+
+## Ignore Patterns
+
+| File | Purpose |
+|------|---------|
+| `.contextignore` | User-defined ignore patterns (one per line, # comments) |
+| `_DEFAULT_IGNORE` | Built-in patterns in parser.py (merged with .contextignore) |
+
+## Output Formats
+
+| Format | Compare File | Notes Files | Use Case |
+|--------|-------------|-------------|----------|
+| `.md` (default) | `compare.md` | `A_NOTES.md` | Markdown with formatting |
+| `.txt` | `compare.txt` | `A_NOTES.txt` | Plain text, fewer tokens |

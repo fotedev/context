@@ -9,22 +9,63 @@ CURRENT STATE:
 WHAT I WANT TO BUILD:
 1. OUTPUT ORGANIZATION: Instead of dumping arena.txt/structure.txt/compare.md in CWD, create a dedicated output folder (e.g., context_output/) to keep things clean.
 2. MULTI-FILE SUPPORT: Currently reads only files.txt. I want it to discover and process ALL files*.txt (files_006.txt, files_007.txt, etc.) — each gets its own arena/structure/compare outputs.
-3. NON-INTERACTIVE MODE: Remove hardcoded input() prompts; make Gemini judge and compact mode CLI flags (--interactive to re-enable prompts). When --interactive IS enabled, change the prompt behavior:
-   - Gemini judge prompt: pressing Enter (no input) = skip judge, pressing Space then Enter = run judge.
-   - Compact mode prompt: pressing Enter (no input) = skip compact, pressing Space then Enter = enable compact.
-   Basically: Enter = default/skip, Space = opt-in. This is reversed from typical y/N — the idea is that doing nothing (Enter) skips the optional feature, and actively pressing Space opts in.
-4. CONFIGURABLE IGNORE PATTERNS: Currently `_DEFAULT_IGNORE` in parser.py is a hardcoded frozenset. I want the script to:
-   - Look for a `.conignore` file (simple name, easy to type) in the project root.
-   - If `.conignore` doesn't exist, create it with a default template showing example patterns (comments start with #, one pattern per line).
-   - Merge `.conignore` patterns with built-in defaults at runtime.
-   - This replaces the current `.index_ignore` file support (or coexist — your call, but `.conignore` should be the primary).
+3. NON-INTERACTIVE MODE: Remove hardcoded input() prompts; make Gemini judge and compact mode CLI flags (--interactive to re-enable prompts). When --interactive IS enabled, use this prompt style:
+   - Enter = default/skip, Space + Enter = opt-in. Doing nothing (Enter) skips the optional feature, Space opts in.
+   - Interactive prompts in order:
+     a. "Run Gemini auto-comparison? [Enter=skip, Space=run]: "
+     b. "Reduce tokens? Compact mode [Enter=skip, Space=enable]: "
+     c. "Archive model responses? [Enter=no, just generate compare now, Space=archive]: "
+     d. "How many models? [Enter=2, Space=4]: "
+     e. "Output format? [Enter=.md, Space=.txt]: "
+   - Archive behavior: if Space is pressed (archive), save each model's response to `models/ARCHIVE/` with timestamp (e.g., `ARCHIVE/A_20260622_143022.txt`). Then re-ask how many models to compare from the archived set (user can pick different subset than original).
+4. AUTO NOTES SYSTEM: Instead of manually editing compare.md to add notes, create separate notes files per model:
+   - Before generating compare.md, look for notes files in models/ named like `A_NOTES.txt`, `B_NOTES.txt`, etc. (or `.md` — same extension as output).
+   - If a notes file exists, read it and insert its content under the model's response as "### Notes" section in compare.md.
+   - If no notes file exists, skip the Notes section for that model (or add empty placeholder — your call).
+   - This way users can write notes in a separate file per model and they auto-merge into the comparison.
+5. OUTPUT FORMAT CHOICE: Let user choose compare output format:
+   - `.md` (markdown, default) — press Enter
+   - `.txt` (plain text) — press Space then Enter
+   - The chosen extension applies to compare output AND notes files (e.g., if .txt chosen, look for `A_NOTES.txt`).
+6. MODEL COUNT CHOICE: Let user choose how many models to compare:
+   - Detect what model files already exist in models/ (A.txt, B.txt, C.txt, D.txt).
+   - Prompt: "How many models? [Enter=2, Space=4]: "
+   - Enter = compare first 2 models (A, B)
+   - Space + Enter = compare 4 models (A, B, C, D)
+   - If fewer than 2 model files exist, auto-create missing ones (prompt for count).
+   - After archiving (if chosen), re-ask this question so user can pick a different subset from archived responses.
+7. CONFIGURABLE IGNORE PATTERNS: Currently `_DEFAULT_IGNORE` in parser.py is a hardcoded frozenset. I want the script to:
+   - Look for a `.contextignore` file in the project root.
+   - If `.contextignore` doesn't exist, create it with a default template showing example patterns (comments start with #, one pattern per line).
+   - Merge `.contextignore` patterns with built-in defaults at runtime.
+   - This replaces the current `.index_ignore` file support (or coexist — your call, but `.contextignore` should be the primary).
+8. SETTINGS.JSON — PERSISTENT PREFERENCES: Add a `.context/settings.json` file (hidden config folder in project root) that stores user preferences so they don't have to answer prompts every run:
+   - If `.context/` folder doesn't exist, create it.
+   - If `.context/settings.json` doesn't exist, create it with defaults and print: "Created .context/settings.json — edit your preferences or delete to reset."
+   - If it exists, read it and apply stored preferences (skip those interactive prompts).
+   - If user passes `--interactive` flag, ignore settings.json and show all prompts (settings.json is still read as defaults but prompts override).
+   - Schema:
+     ```json
+     {
+       "output_dir": "context_output",
+       "output_format": "md",
+       "model_count": 2,
+       "gemini_judge": false,
+       "compact_mode": false,
+       "archive": false,
+       "archive_dir": "models/ARCHIVE"
+     }
+     ```
+   - Values: `output_format` = "md" or "txt", `model_count` = 2 or 4, booleans = true/false.
+   - If a key is missing from settings.json, use the default value (same as pressing Enter).
+   - Also add a mini-skill: when a user mentions "context settings" to an AI model, the model should help them create or edit this .context/settings.json file.
 
 ABOUT COMPACT MODE (for context): Compact mode in core/judge.py's build_compare_markdown() does: (1) removes "### Notes" sections under each model response, (2) collapses multiple blank lines into single newlines, (3) trims trailing whitespace. It's a token saver for pasting compare.md into LMArena — less formatting, just responses + verdict.
 
 CONSTRAINTS:
 - Keep backwards compatibility — running with no args should still work (auto-discover files*.txt).
 - Output folder name should be configurable via --output flag.
-- Add context_output to ignore patterns so it doesn't appear in project trees.
+- Add `context_output` and `.context` to ignore patterns so they don't appear in project trees.
 - Don't break existing core/parser.py, core/counter.py, core/judge.py APIs.
 
-DELIVERABLE: Updated aggregator.py with multi-file discovery, organized output, and CLI flags. Updated core/parser.py for .conignore support with default template generation. Minimal changes to core/ modules.
+DELIVERABLE: Updated aggregator.py with multi-file discovery, organized output, CLI flags, auto-notes, archive system, output format choice, model count choice, and .context/settings.json support. Updated core/parser.py for .conignore support with default template generation. Updated core/judge.py for auto-notes merging and archive support. Minimal changes to core/ modules.
