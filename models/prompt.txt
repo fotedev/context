@@ -1,101 +1,139 @@
-I have a Python CLI tool called "context" (arena-context skill). It aggregates source files for LMArena blind pairwise comparisons.
+<role>
+You are a senior Python developer improving a CLI tool called "context" (arena-context skill). The tool aggregates source files for LMArena blind pairwise comparisons. You write clean, minimal Python code following existing patterns in the codebase.
+</role>
 
-CURRENT STATE:
-- aggregator.py: Main entry point. Reads files.txt, generates arena.txt (aggregated code), structure.txt (project tree), compare.md (model comparison).
-- core/parser.py: File parsing, path resolution, tree generation, ignore patterns.
-- core/counter.py: Token counting.
-- core/judge.py: Gemini AI judge integration for auto-comparison.
-- Project root is detected by `find_project_root()` in parser.py — it searches parent directories for markers (.git, package.json, pyproject.toml, requirements.txt, src). The first file path in files.txt is used as the starting point.
+<context>
+The tool has three entry points: aggregator.py (CLI), aggregator_tui.py, aggregator_gui.py. The core logic lives in core/ (parser.py, counter.py, judge.py). Currently it reads a single files.txt, generates arena.txt (aggregated code), structure.txt (project tree), and compare.md (model comparison via Gemini judge).
 
-WHAT I WANT TO BUILD:
-1. OUTPUT ORGANIZATION: Instead of dumping arena.txt/structure.txt/compare.md in CWD, create a dedicated output folder (context_output/) to keep things clean.
-2. MULTI-FILE SUPPORT: Currently reads only files.txt. I want it to discover and process ALL files*.txt (files_1.txt, files_2.txt, etc.) — each gets its own arena/structure/compare outputs with matching suffix (arena_1.txt, compare_1.md, etc.).
-3. FLEXIBLE files.txt FORMAT: Support text/comments before and after file entries in files.txt. The parser should:
-   - Treat lines starting with `#` as comments (already works)
-   - Treat blank lines as separators (already works)
-   - Support a header section at the top (descriptions, notes, context about the problem)
-   - Support a footer section at the bottom (additional notes, reminders)
-   - Skip any line that doesn't look like a valid file path (no need for special markers — just detect if the line is a path or not)
-   - This way users can write自由 text in files.txt without breaking the tool
-   Example files.txt:
-   ```
-   # Bug in navbar layout
-   # The CSS grid is breaking on mobile
-   
-   C:/proj/src/components/Navbar.tsx
-   C:/proj/src/components/Navbar.module.css
-   C:/proj/src/layouts/MainLayout.tsx:45-80
-   
-   # TODO: also check the responsive breakpoints
-   # The issue only happens on screens < 768px
-   ```
-4. NON-INTERACTIVE MODE: Remove hardcoded input() prompts; make Gemini judge and compact mode CLI flags (--interactive to re-enable prompts). When --interactive IS enabled, use this prompt style:
-   - Enter = default/skip, Space + Enter = opt-in. Doing nothing (Enter) skips the optional feature, Space opts in.
-   - Interactive prompts in order:
-     a. "Run Gemini auto-comparison? [Enter=skip, Space=run]: "
-     b. "Reduce tokens? Compact mode [Enter=skip, Space=enable]: "
-     c. "Archive model responses? [Enter=no, Space=archive]: "
-     d. "How many models? [Enter=2, Space=4]: "
-     e. "Output format? [Enter=.md, Space=.txt]: "
-   - Archive behavior: if Space is pressed (archive), save each model's response to `models/ARCHIVE/` with timestamp (e.g., `A_20260622_143022.txt`). Then re-ask how many models to compare from the archived set.
-4. AUTO NOTES SYSTEM: Instead of manually editing compare.md to add notes, create separate notes files per model:
-   - Before generating compare.md, look for notes files in models/ named like `A_NOTES.md`, `B_NOTES.md`, etc. (matching the chosen output extension — if .txt chosen, look for A_NOTES.txt).
-   - If a notes file exists, read it and insert its content under the model's response as "### Notes" section in compare.md.
-   - If no notes file exists, skip the Notes section for that model.
-5. OUTPUT FORMAT CHOICE: Let user choose compare output format:
-   - `.md` (markdown, default) — press Enter
-   - `.txt` (plain text) — press Space then Enter
-   - The chosen extension applies to compare output AND notes files.
-6. MODEL COUNT CHOICE: Let user choose how many models to compare:
-   - Detect what model files already exist in models/ (A.txt, B.txt, C.txt, D.txt).
-   - Prompt: "How many models? [Enter=2, Space=4]: "
-   - Enter = compare first 2 models (A, B)
-   - Space + Enter = compare 4 models (A, B, C, D)
-   - If fewer than 2 model files exist, auto-create missing ones (prompt for count).
-   - After archiving (if chosen), re-ask this question so user can pick a different subset from archived responses.
-7. CONFIGURABLE IGNORE PATTERNS: Currently `_DEFAULT_IGNORE` in parser.py is a hardcoded frozenset. I want the script to:
-   - Look for a `.contextignore` file in the project root.
-   - If `.contextignore` doesn't exist, create it with a default template showing example patterns (comments start with #, one pattern per line).
-   - Merge `.contextignore` patterns with built-in defaults at runtime.
-   - This replaces the current `.index_ignore` file support (or coexist — your call, but `.contextignore` should be the primary).
-8. SETTINGS.JSON — PERSISTENT PREFERENCES: Add a `.context/settings.json` file (hidden config folder in project root) that stores user preferences so they don't have to answer prompts every run:
-   - If `.context/` folder doesn't exist, create it.
-   - If `.context/settings.json` doesn't exist, create it with defaults and print: "Created .context/settings.json — edit your preferences or delete to reset."
-   - If it exists, read it and apply stored preferences (skip those interactive prompts).
-   - If user passes `--interactive` flag, ignore settings.json and show all prompts (settings.json is still read as defaults but prompts override).
-   - Schema:
-     ```json
-     {
-       "output_dir": "context_output",
-       "output_format": "md",
-       "model_count": 2,
-       "gemini_judge": false,
-       "compact_mode": false,
-       "archive": false,
-       "archive_dir": "models/ARCHIVE"
-     }
-     ```
-   - Values: `output_format` = "md" or "txt", `model_count` = 2 or 4, booleans = true/false.
-   - If a key is missing from settings.json, use the default value (same as pressing Enter).
-   - Also add a mini-skill: when a user mentions "context settings" to an AI model, the model should help them create or edit this .context/settings.json file.
+Project root detection: find_project_root() in parser.py searches parent directories for markers (.git, package.json, pyproject.toml, requirements.txt, src). The first file path in files.txt is used as the starting point.
 
-EDGE CASES — DEFINE BEHAVIOR:
-9. EMPTY files.txt: Create empty templates for arena.txt, structure.txt, compare.md in the output folder. Even if empty, the files should exist. The tool knows the project root from `find_project_root()` using the first file path in files.txt, or from CWD if no files.txt entries exist.
-10. INVALID/BROKEN settings.json: Fall back to defaults silently, BUT print a warning every time the script runs: "Warning: settings.json is invalid, using defaults. Run with --interactive to recreate." If settings.json is empty, print: "Warning: settings.json is empty — use the context skill with an AI model to set up preferences." If settings.json is not found, create it with defaults.
-11. model_count=4 but only A.txt/B.txt exist: Auto-create empty C.txt and D.txt, then prompt user to paste content into them.
-12. ARCHIVE TIMESTAMP COLLISION: If `A_20260622_143022.txt` already exists, append `_1`, `_2`, etc. (e.g., `A_20260622_143022_1.txt`).
-13. context_output/ HAS OLD FILES: Warn user: "context_output/ already has files. Merge? [Enter=merge, Space=skip]". Enter = merge/overwrite existing files. Space = skip this run, don't touch the folder.
-14. GEMINI API KEY NOT SET: Print warning: "Warning: GEMINI_API_KEY not set in .env — Gemini judge skipped." Do not error. The .env file should be in the tool root directory (where aggregator.py is), NOT in the user's project. The tool reads its own .env, not the project's.
-15. NOTES FILE EXTENSION MISMATCH: Only match the chosen output extension. If output_format=txt, only look for A_NOTES.txt — ignore A_NOTES.md.
-16. OLD FILES IN CWD (arena.txt, compare.md, structure.txt): Warn user: "Old output files found in project root. Clean? [Enter=clean and overwrite, Space=skip]". Enter = delete old files from CWD. Space = leave them alone.
+Compact mode in core/judge.py does: (1) removes "### Notes" sections, (2) collapses blank lines, (3) trims trailing whitespace. It's a token saver for LMArena.
+</context>
 
-ABOUT COMPACT MODE (for context): Compact mode in core/judge.py's build_compare_markdown() does: (1) removes "### Notes" sections under each model response, (2) collapses multiple blank lines into single newlines, (3) trims trailing whitespace. It's a token saver for pasting compare.md into LMArena — less formatting, just responses + verdict.
+<current_code>
+<file path="aggregator.py">
+Main entry point. Reads files.txt → generates arena.txt, structure.txt, compare.md. Has hardcoded input() prompts for Gemini judge and compact mode.
+</file>
+<file path="core/parser.py">
+File parsing, path resolution, tree generation, ignore patterns. _DEFAULT_IGNORE is a hardcoded frozenset. read_file_entries() skips blank lines and # comments.
+</file>
+<file path="core/counter.py">
+Token counting using tiktoken.
+</file>
+<file path="core/judge.py">
+Gemini AI judge integration. build_compare_markdown() accepts compact flag. collect_model_responses() reads from models/ dir.
+</file>
+</current_code>
 
-CONSTRAINTS:
-- Keep backwards compatibility — running with no args should still work (auto-discover files*.txt).
-- Output folder name should be configurable via --output flag.
-- Add `context_output` and `.context` to ignore patterns so they don't appear in project trees.
-- Don't break existing core/parser.py, core/counter.py, core/judge.py APIs.
-- The tool's own .env file (for GEMINI_API_KEY) lives in the tool root directory, not in user projects.
+<requirements>
+<requirement id="1" priority="high">
+OUTPUT ORGANIZATION: Create a dedicated output folder (context_output/) instead of dumping files in CWD. All generated files go there.
+</requirement>
 
-DELIVERABLE: Updated aggregator.py with multi-file discovery, organized output, CLI flags, auto-notes, archive system, output format choice, model count choice, .context/settings.json support, and all edge case handling. Updated core/parser.py for .contextignore support with default template generation. Updated core/judge.py for auto-notes merging and archive support. Minimal changes to core/ modules.
+<requirement id="2" priority="high">
+MULTI-FILE SUPPORT: Discover and process ALL files*.txt (files.txt, files_1.txt, files_2.txt, etc.). Each gets its own arena/structure/compare outputs with matching suffix (arena_1.txt, compare_1.md, structure_1.txt).
+</requirement>
+
+<requirement id="3" priority="medium">
+FLEXIBLE files.txt FORMAT: Support text/comments before and after file entries. Skip any line that doesn't look like a valid file path. Lines starting with # = comments. Blank lines = separators. No special markers needed.
+</requirement>
+
+<requirement id="4" priority="high">
+NON-INTERACTIVE MODE: Remove hardcoded input() prompts. Add --interactive flag to re-enable them. When interactive, use this prompt style:
+- Enter = default/skip, Space + Enter = opt-in
+- Prompts in order:
+  a. "Run Gemini auto-comparison? [Enter=skip, Space=run]: "
+  b. "Reduce tokens? Compact mode [Enter=skip, Space=enable]: "
+  c. "Archive model responses? [Enter=no, Space=archive]: "
+  d. "How many models? [Enter=2, Space=4]: "
+  e. "Output format? [Enter=.md, Space=.txt]: "
+- Archive: save to models/ARCHIVE/ with timestamp (A_20260622_143022.txt). Re-ask model count from archived set.
+</requirement>
+
+<requirement id="5" priority="medium">
+AUTO NOTES: Look for notes files in models/ (A_NOTES.md, B_NOTES.md — matching output extension). If exists, insert as "### Notes" section under model response in compare.md. If not exists, skip Notes section.
+</requirement>
+
+<requirement id="6" priority="medium">
+MODEL COUNT CHOICE: Detect existing model files (A.txt, B.txt, C.txt, D.txt). Prompt for count. Enter=2, Space=4. Auto-create missing files if needed.
+</requirement>
+
+<requirement id="7" priority="medium">
+CONFIGURABLE IGNORE PATTERNS: Replace hardcoded _DEFAULT_IGNORE with .contextignore file. Create default template if missing. Merge with built-in defaults.
+</requirement>
+
+<requirement id="8" priority="high">
+SETTINGS.JSON: Add .context/settings.json for persistent preferences. Auto-create with defaults if missing. Read on every run. --interactive overrides settings. Schema:
+{
+  "output_dir": "context_output",
+  "output_format": "md",
+  "model_count": 2,
+  "gemini_judge": false,
+  "compact_mode": false,
+  "archive": false,
+  "archive_dir": "models/ARCHIVE"
+}
+</requirement>
+
+<requirement id="9" priority="low">
+MINI-SKILL: When user mentions "context settings", help them create/edit .context/settings.json.
+</requirement>
+</requirements>
+
+<edge_cases>
+<case id="1" input="empty files.txt" action="Create empty templates in output folder. Files exist but are empty." />
+<case id="2" input="invalid settings.json" action="Fall back to defaults. Print warning every run. If empty, print: use context skill with AI model." />
+<case id="3" input="model_count=4 but only 2 files" action="Auto-create empty C.txt, D.txt. Prompt user to paste content." />
+<case id="4" input="archive timestamp collision" action="Append _1, _2, etc." />
+<case id="5" input="context_output/ has old files" action="Warn: Merge? [Enter=merge, Space=skip]" />
+<case id="6" input="GEMINI_API_KEY not set" action="Warn and skip judge. Don't error. .env lives in tool root, not project." />
+<case id="7" input="notes extension mismatch" action="Only match chosen output extension." />
+<case id="8" input="old files in CWD" action="Warn: Clean? [Enter=clean, Space=skip]" />
+</edge_cases>
+
+<constraints>
+- Keep backwards compatibility — running with no args should still work.
+- Output folder configurable via --output flag.
+- Add context_output and .context to ignore patterns.
+- Don't break existing core/ module APIs.
+- The tool's .env (GEMINI_API_KEY) lives in tool root directory, not user projects.
+</constraints>
+
+<examples>
+<example>
+<files.txt>
+# Bug in navbar layout
+# CSS grid breaking on mobile < 768px
+
+C:/proj/src/components/Navbar.tsx
+C:/proj/src/components/Navbar.module.css
+C:/proj/src/layouts/MainLayout.tsx:45-80
+
+# TODO: check responsive breakpoints
+</files.txt>
+→ Parser extracts 3 valid paths, skips 3 comment lines and blank lines.
+</example>
+
+<example>
+<settings.json>
+{"output_dir": "context_output", "output_format": "txt", "model_count": 4, "gemini_judge": true, "compact_mode": true, "archive": true}
+</settings.json>
+→ Run uses these settings. --interactive shows prompts with these as defaults.
+</example>
+
+<example>
+<archive>
+models/ARCHIVE/A_20260622_143022.txt exists → new file becomes A_20260622_143022_1.txt
+</archive>
+</example>
+</examples>
+
+<deliverable>
+Update aggregator.py with: multi-file discovery, organized output folder, CLI flags (--interactive, --output), auto-notes, archive system, output format choice, model count choice, .context/settings.json support, and all edge case handling.
+
+Update core/parser.py: .contextignore support with default template, flexible file path detection in read_file_entries().
+
+Update core/judge.py: auto-notes merging from notes files.
+
+Keep changes minimal to core/ module APIs.
+</deliverable>
