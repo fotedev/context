@@ -1,0 +1,4 @@
+# Context Tool — Ignore Patterns
+# One pattern per line.  # Comments and blank lines are ignored.
+# These patterns are ADDITIONAL to the built-in defaults.
+# Built-in defaults already cover: .git, node_modules, __pycache__, etc.

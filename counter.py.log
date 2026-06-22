@@ -1,0 +1,210 @@
+[{
+	"resource": "/c:/programming/Python/Projects/context/core/counter.py",
+	"owner": "basedpyright5",
+	"code": {
+		"value": "reportMissingImports",
+		"target": {
+			"$mid": 1,
+			"path": "/v1.39.8/configuration/config-files/",
+			"scheme": "https",
+			"authority": "docs.basedpyright.com",
+			"fragment": "reportMissingImports"
+		}
+	},
+	"severity": 8,
+	"message": "Import \"tiktoken\" could not be resolved",
+	"source": "basedpyright",
+	"startLineNumber": 17,
+	"startColumn": 16,
+	"endLineNumber": 17,
+	"endColumn": 24,
+	"origin": "extHost1"
+},{
+	"resource": "/c:/programming/Python/Projects/context/core/counter.py",
+	"owner": "_generated_diagnostic_collection_name_#2",
+	"code": {
+		"value": "W0611:unused-import",
+		"target": {
+			"$mid": 1,
+			"path": "/en/latest/user_guide/messages/warning/unused-import.html",
+			"scheme": "https",
+			"authority": "pylint.readthedocs.io"
+		}
+	},
+	"severity": 4,
+	"message": "Unused import sys",
+	"source": "Pylint",
+	"startLineNumber": 1,
+	"startColumn": 1,
+	"endLineNumber": 1,
+	"endColumn": 11,
+	"origin": "extHost1"
+},{
+	"resource": "/c:/programming/Python/Projects/context/core/counter.py",
+	"owner": "basedpyright5",
+	"code": {
+		"value": "reportUnusedImport",
+		"target": {
+			"$mid": 1,
+			"path": "/v1.39.8/configuration/config-files/",
+			"scheme": "https",
+			"authority": "docs.basedpyright.com",
+			"fragment": "reportUnusedImport"
+		}
+	},
+	"severity": 4,
+	"message": "Import \"sys\" is not accessed",
+	"source": "basedpyright",
+	"startLineNumber": 1,
+	"startColumn": 8,
+	"endLineNumber": 1,
+	"endColumn": 11,
+	"tags": [
+		1
+	],
+	"origin": "extHost1"
+},{
+	"resource": "/c:/programming/Python/Projects/context/core/counter.py",
+	"owner": "basedpyright5",
+	"code": {
+		"value": "reportUnknownVariableType",
+		"target": {
+			"$mid": 1,
+			"path": "/v1.39.8/configuration/config-files/",
+			"scheme": "https",
+			"authority": "docs.basedpyright.com",
+			"fragment": "reportUnknownVariableType"
+		}
+	},
+	"severity": 4,
+	"message": "Type of \"encoding\" is unknown",
+	"source": "basedpyright",
+	"startLineNumber": 18,
+	"startColumn": 9,
+	"endLineNumber": 18,
+	"endColumn": 17,
+	"origin": "extHost1"
+},{
+	"resource": "/c:/programming/Python/Projects/context/core/counter.py",
+	"owner": "basedpyright5",
+	"code": {
+		"value": "reportUnknownMemberType",
+		"target": {
+			"$mid": 1,
+			"path": "/v1.39.8/configuration/config-files/",
+			"scheme": "https",
+			"authority": "docs.basedpyright.com",
+			"fragment": "reportUnknownMemberType"
+		}
+	},
+	"severity": 4,
+	"message": "Type of \"get_encoding\" is unknown",
+	"source": "basedpyright",
+	"startLineNumber": 18,
+	"startColumn": 20,
+	"endLineNumber": 18,
+	"endColumn": 41,
+	"origin": "extHost1"
+},{
+	"resource": "/c:/programming/Python/Projects/context/core/counter.py",
+	"owner": "basedpyright5",
+	"code": {
+		"value": "reportUnknownMemberType",
+		"target": {
+			"$mid": 1,
+			"path": "/v1.39.8/configuration/config-files/",
+			"scheme": "https",
+			"authority": "docs.basedpyright.com",
+			"fragment": "reportUnknownMemberType"
+		}
+	},
+	"severity": 4,
+	"message": "Type of \"encode\" is unknown",
+	"source": "basedpyright",
+	"startLineNumber": 19,
+	"startColumn": 20,
+	"endLineNumber": 19,
+	"endColumn": 35,
+	"origin": "extHost1"
+},{
+	"resource": "/c:/programming/Python/Projects/context/core/counter.py",
+	"owner": "basedpyright5",
+	"code": {
+		"value": "reportUnknownArgumentType",
+		"target": {
+			"$mid": 1,
+			"path": "/v1.39.8/configuration/config-files/",
+			"scheme": "https",
+			"authority": "docs.basedpyright.com",
+			"fragment": "reportUnknownArgumentType"
+		}
+	},
+	"severity": 4,
+	"message": "Argument type is unknown\n  Argument corresponds to parameter \"obj\" in function \"len\"",
+	"source": "basedpyright",
+	"startLineNumber": 19,
+	"startColumn": 20,
+	"endLineNumber": 19,
+	"endColumn": 41,
+	"origin": "extHost1"
+},{
+	"resource": "/c:/programming/Python/Projects/context/core/counter.py",
+	"owner": "_generated_diagnostic_collection_name_#2",
+	"code": {
+		"value": "C0114:missing-module-docstring",
+		"target": {
+			"$mid": 1,
+			"path": "/en/latest/user_guide/messages/convention/missing-module-docstring.html",
+			"scheme": "https",
+			"authority": "pylint.readthedocs.io"
+		}
+	},
+	"severity": 2,
+	"message": "Missing module docstring",
+	"source": "Pylint",
+	"startLineNumber": 1,
+	"startColumn": 1,
+	"endLineNumber": 1,
+	"endColumn": 1,
+	"origin": "extHost1"
+},{
+	"resource": "/c:/programming/Python/Projects/context/core/counter.py",
+	"owner": "_generated_diagnostic_collection_name_#2",
+	"code": {
+		"value": "C0303:trailing-whitespace",
+		"target": {
+			"$mid": 1,
+			"path": "/en/latest/user_guide/messages/convention/trailing-whitespace.html",
+			"scheme": "https",
+			"authority": "pylint.readthedocs.io"
+		}
+	},
+	"severity": 2,
+	"message": "Trailing whitespace",
+	"source": "Pylint",
+	"startLineNumber": 24,
+	"startColumn": 1,
+	"endLineNumber": 24,
+	"endColumn": 1,
+	"origin": "extHost1"
+},{
+	"resource": "/c:/programming/Python/Projects/context/core/counter.py",
+	"owner": "_generated_diagnostic_collection_name_#2",
+	"code": {
+		"value": "C0303:trailing-whitespace",
+		"target": {
+			"$mid": 1,
+			"path": "/en/latest/user_guide/messages/convention/trailing-whitespace.html",
+			"scheme": "https",
+			"authority": "pylint.readthedocs.io"
+		}
+	},
+	"severity": 2,
+	"message": "Trailing whitespace",
+	"source": "Pylint",
+	"startLineNumber": 27,
+	"startColumn": 1,
+	"endLineNumber": 27,
+	"endColumn": 1,
+	"origin": "extHost1"
+}]

@@ -1,0 +1,8 @@
+# Core (CLI) - no external dependencies required
+# All standard library: sys, pathlib, re, fnmatch, json, urllib, typing
+
+# Optional: accurate token counting (fallback exists if not installed)
+tiktoken
+
+# TUI only (aggregator_tui.py)
+textual

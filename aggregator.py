@@ -11,9 +11,9 @@ from pathlib import Path
 
 # Reconfigure stdout/stderr to UTF-8 to prevent encoding errors on Windows terminals
 if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stdout.reconfigure(encoding='utf-8')  # pyright: ignore[reportAttributeAccessIssue]
 if hasattr(sys.stderr, 'reconfigure'):
-    sys.stderr.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')  # pyright: ignore[reportAttributeAccessIssue]
 
 
 # Import from core module package (for CLI execution and backwards compatibility with TUI/GUI)
@@ -22,8 +22,6 @@ from core.parser import (
     find_project_root,
     generate_tree,
     load_ignore_patterns,
-    read_file_paths,
-    should_ignore,
     initialize_environment,
     read_file_entries,
 )
@@ -72,13 +70,21 @@ def main() -> None:
             root = cmd_root.resolve()
         else:
             root = find_project_root(entries[0][0])
-        
+
         patterns = load_ignore_patterns(root)
 
         # Count types for reporting
-        full_files = sum(1 for _, ranges, _ in entries if ranges is None)
-        snippets = sum(1 for _, ranges, important in entries if ranges is not None and not important)
-        important = sum(1 for _, ranges, imp in entries if ranges is not None and imp)
+        full_files = sum(
+            1 for _, ranges, _ in entries if ranges is None
+        )
+        snippets = sum(
+            1 for _, ranges, important in entries
+            if ranges is not None and not important
+        )
+        important = sum(
+            1 for _, ranges, imp in entries
+            if ranges is not None and imp
+        )
 
         # 1. Project tree
         if root:
@@ -86,20 +92,27 @@ def main() -> None:
             tree_lines = [f"Project Root: {root.name}/"] + generate_tree(
                 root, root, patterns
             )
-            structure_txt.write_text("\n".join(tree_lines), encoding="utf-8")
+            _ = structure_txt.write_text(
+                "\n".join(tree_lines), encoding="utf-8"
+            )
             print(f"Structure written → {structure_txt}")
         else:
-            print("No project root detected — skipping structure.txt.", file=sys.stderr)
+            print(
+                "No project root detected — skipping structure.txt.",
+                file=sys.stderr,
+            )
 
         # 2. File aggregation (full files + snippets + important structures)
-        parts = []
+        parts: list[str] = []
         if full_files:
             parts.append(f"{full_files} file(s)")
         if snippets:
             parts.append(f"{snippets} snippet(s)")
         if important:
             parts.append(f"{important} structure(s)")
-        print(f"Aggregating {' + '.join(parts)} → {arena_txt} …")
+        print(
+            f"Aggregating {' + '.join(parts)} → {arena_txt} …"
+        )
         aggregate_files(entries, arena_txt, root)
         print("Aggregation complete.")
 
@@ -107,44 +120,78 @@ def main() -> None:
         try:
             arena_content = arena_txt.read_text(encoding="utf-8")
             token_count = count_tokens(arena_content)
-            print(f"Total size: {len(arena_content)} characters | Estimated tokens: {token_count}")
-        except Exception as exc:
+            print(
+                f"Total size: {len(arena_content)} characters"
+                f" | Estimated tokens: {token_count}"
+            )
+        except (OSError, ValueError) as exc:
             print(f"Warning: Could not count tokens: {exc}")
 
         # 4. Generate Compare from models/ dir or llm.txt (if exists) or template
         prompt, models_data = collect_model_responses(root)
         if models_data:
             # Ask for AI Judge
-            judge_input = input("\nRun Gemini auto-comparison? [Y/n]: ").lower().strip()
+            judge_input = input(
+                "\nRun Gemini auto-comparison? [Y/n]: "
+            ).lower().strip()
             run_judge = judge_input != 'n'
-            
+
             verdict = None
             if run_judge:
                 api_key = get_api_key(root)
                 if api_key:
                     try:
-                        verdict = get_gemini_verdict(prompt, models_data, api_key)
-                        print("Gemini comparison evaluation generated successfully.")
-                    except Exception as e:
-                        print(f"Warning: Gemini evaluation failed ({e}). Falling back to manual template.")
+                        verdict = get_gemini_verdict(
+                            prompt, models_data, api_key
+                        )
+                        print(
+                            "Gemini comparison evaluation"
+                            " generated successfully."
+                        )
+                    except Exception as e:  # noqa: BLE001 — Gemini SDK errors
+                        print(
+                            f"Warning: Gemini evaluation failed"
+                            f" ({e}). Falling back to"
+                            f" manual template."
+                        )
                 else:
-                    print("API key skipped. Falling back to manual template.")
+                    print(
+                        "API key skipped. Falling back"
+                        " to manual template."
+                    )
 
             # Ask for compact mode
-            compact_input = input("Reduce tokens? (Compact mode, remove Notes) [y/N]: ").lower().strip()
+            compact_input = input(
+                "Reduce tokens? (Compact mode, remove Notes)"
+                " [y/N]: "
+            ).lower().strip()
             compact = compact_input == 'y'
-            
-            build_compare_markdown(prompt, models_data, compare_txt, verdict=verdict, compact=compact)
+
+            build_compare_markdown(
+                prompt, models_data, compare_txt,
+                verdict=verdict, compact=compact,
+            )
             target_root = root if root is not None else Path.cwd()
-            src = "models/" if (target_root / "models").is_dir() else "llm.txt"
+            src = (
+                "models/"
+                if (target_root / "models").is_dir()
+                else "llm.txt"
+            )
             mode_str = " (COMPACT)" if compact else ""
             judge_str = " with Gemini AI Judge" if verdict else ""
-            print(f"Compare generated from {src} → {compare_txt} ({len(models_data)} models){mode_str}{judge_str}")
+            print(
+                f"Compare generated from {src} → {compare_txt}"
+                f" ({len(models_data)} models)"
+                f"{mode_str}{judge_str}"
+            )
         else:
             generate_compare_template(compare_txt)
-            print(f"No model responses found — default template → {compare_txt}")
+            print(
+                "No model responses found — default template"
+                f" → {compare_txt}"
+            )
 
-    except Exception as exc:          # noqa: BLE001 — last-resort guard in main
+    except Exception as exc:  # noqa: BLE001 — last-resort guard in main
         print(f"CRITICAL ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
 

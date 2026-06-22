@@ -11,3 +11,4 @@ compare_4.txt
 __pycache__
 .env
 .env.local
+/models
