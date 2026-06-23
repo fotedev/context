@@ -15,3 +15,7 @@ __pycache__
 aggregator_gui.py.log
 aggregator_tui.py.log
 /context_output
+/aggregator.py.log
+/counter.py.log
+/judge.py.log
+/parser.py.log
