@@ -13,9 +13,10 @@ Curates the minimum sufficient local context that LMArena needs to understand a 
 
 Prepares context for Blind Pairwise Comparisons and Arena Expert prompts on LMArena, where multiple models are evaluated head-to-head.
 
-## Reference to prompt.txt
-For the detailed specification, features, requirements, and edge cases of the context aggregator tool (including multi-file support, output folder organization, interactive settings, and legacy migration), refer to the workspace file:
-[prompt.txt](file:///c:/programming/Python/Projects/context/prompt.txt)
+## Reference to prompt.txt & organize-root.md
+- For the detailed specification, features, requirements, and edge cases of the context aggregator tool, refer to the workspace file: [prompt.txt](file:///c:/programming/Python/Projects/context/prompt.txt)
+- For the layout organization steps and legacy file cleanup, refer to the mini-skill: [organize-root.md](file:///c:/programming/Python/Projects/context/arena-context/organize-root.md)
+
 
 ## Inputs
 | Item | Path / Location |
