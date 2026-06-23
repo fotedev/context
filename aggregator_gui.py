@@ -22,12 +22,13 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font, messagebox, scrolledtext, ttk
+from typing import Optional, Any
 
 # ── Encoding fix for Windows terminals ───────────────────────────────────────
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore
 if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")  # type: ignore
 
 # ── Project directory on sys.path so core/ is importable ─────────────────────
 _PROJECT_DIR = Path(__file__).resolve().parent
@@ -143,7 +144,7 @@ class _ApiKeyDialog(tk.Toplevel):
             bg=_BG, fg=_YELLOW,
             font=("Segoe UI", 10, "bold"),
             wraplength=420, justify="left",
-        ).pack(fill="x", **pad)
+        ).pack(fill="x", padx=20, pady=8)
 
         tk.Label(
             self,
@@ -261,25 +262,25 @@ class AggregatorGUI(tk.Tk):
         self._output_format_var: tk.StringVar = tk.StringVar(value="md")
 
         # UI Font variables
-        self._font_ui: font.Font | None = None
-        self._font_mono: font.Font | None = None
-        self._font_title: font.Font | None = None
-        self._font_small: font.Font | None = None
+        self._font_ui: font.Font = None  # type: ignore
+        self._font_mono: font.Font = None  # type: ignore
+        self._font_title: font.Font = None  # type: ignore
+        self._font_small: font.Font = None  # type: ignore
 
         # UI Components variables
-        self._tree_title: tk.Label | None = None
-        self._search_var: tk.StringVar | None = None
-        self._tree: ttk.Treeview | None = None
-        self._queue_title: tk.Label | None = None
-        self._queue_listbox: tk.Listbox | None = None
+        self._tree_title: tk.Label = None  # type: ignore
+        self._search_var: tk.StringVar = None  # type: ignore
+        self._tree: ttk.Treeview = None  # type: ignore
+        self._queue_title: tk.Label = None  # type: ignore
+        self._queue_listbox: tk.Listbox = None  # type: ignore
         self._queue_colours: dict[int, str] = {}
-        self._api_key_label: tk.Label | None = None
-        self._log: scrolledtext.ScrolledText | None = None
-        self._project_path_var: tk.StringVar | None = None
-        self._project_path_entry: tk.Entry | None = None
-        self._progress: ttk.Progressbar | None = None
-        self._status_var: tk.StringVar | None = None
-        self._status_lbl: tk.Label | None = None
+        self._api_key_label: tk.Label = None  # type: ignore
+        self._log: scrolledtext.ScrolledText = None  # type: ignore
+        self._project_path_var: tk.StringVar = None  # type: ignore
+        self._project_path_entry: tk.Entry = None  # type: ignore
+        self._progress: ttk.Progressbar = None  # type: ignore
+        self._status_var: tk.StringVar = None  # type: ignore
+        self._status_lbl: tk.Label = None  # type: ignore
 
         # Load initial settings
         self._load_and_apply_settings()
@@ -337,7 +338,7 @@ class AggregatorGUI(tk.Tk):
                 self._output_dir_var.set(str(self._settings.get("output_dir", "context_output")))
             
             try:
-                count = int(self._settings.get("model_count", 2))
+                count = int(str(self._settings.get("model_count", 2)))
                 if count not in (2, 4):
                     count = 2
             except (ValueError, TypeError):
@@ -663,7 +664,7 @@ class AggregatorGUI(tk.Tk):
         model_count_combo = ttk.Combobox(
             row2,
             textvariable=self._model_count_var,
-            values=[2, 4],
+            values=["2", "4"],
             state="readonly",
             width=3,
         )
@@ -937,7 +938,7 @@ class AggregatorGUI(tk.Tk):
     # Queue management  (files.txt read / write in full-entry format)
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _current_queue_entries(self) -> list:
+    def _current_queue_entries(self) -> list[Any]:
         """Read files.txt and return the parsed entry list (may be empty)."""
         if not self.files_txt_path.is_file():
             return []
@@ -1110,7 +1111,7 @@ class AggregatorGUI(tk.Tk):
             gemini_judge = bool(settings.get("gemini_judge", False))
             compact_mode = bool(settings.get("compact_mode", False))
             archive = bool(settings.get("archive", False))
-            model_count = int(settings.get("model_count", 2))
+            model_count = int(str(settings.get("model_count", 2)))
 
             # --- Migration ----------------------------------------------------
             self._step("Migrating legacy outputs if needed …")

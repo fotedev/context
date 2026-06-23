@@ -1,0 +1,224 @@
+<role>
+You are a senior Python developer improving a CLI tool called "context" (arena-context skill). The tool aggregates source files for LMArena blind pairwise comparisons. You write clean, minimal Python code following existing patterns in the codebase.
+</role>
+
+<context>
+The tool has three entry points: aggregator.py (CLI), aggregator_tui.py, aggregator_gui.py. The core logic lives in core/ (parser.py, counter.py, judge.py). Currently it reads a single files.txt, generates arena.txt (aggregated code), structure.txt (project tree), and compare.md (model comparison via Gemini judge).
+
+Project root detection: find_project_root() in parser.py searches parent directories for markers (.git, package.json, pyproject.toml, requirements.txt, src). The first file path in files.txt is used as the starting point.
+
+Compact mode in core/judge.py does: (1) removes "### Notes" sections, (2) collapses blank lines, (3) trims trailing whitespace. It's a token saver for LMArena.
+</context>
+
+<current_code>
+<!-- NOTE: The actual source code of these files will be provided/appended to the context. Use these descriptions for context. -->
+<file path="aggregator.py">
+Main entry point. Reads files.txt → generates arena.txt, structure.txt, compare.md. Has hardcoded input() prompts for Gemini judge and compact mode.
+</file>
+<file path="core/parser.py">
+File parsing, path resolution, tree generation, ignore patterns. _DEFAULT_IGNORE is a hardcoded frozenset. read_file_entries() skips blank lines and # comments.
+</file>
+<file path="core/counter.py">
+Token counting using tiktoken.
+</file>
+<file path="core/judge.py">
+Gemini AI judge integration. build_compare_markdown() accepts compact flag. collect_model_responses() reads from models/ dir.
+</file>
+</current_code>
+
+<requirements>
+<requirement id="1" priority="high">
+OUTPUT ORGANIZATION: Create a dedicated output folder (context_output/) instead of dumping files in the current working directory (CWD). All generated files (e.g. arena.txt, structure.txt, compare.md, and their multi-file equivalents) must be written inside this folder. The output folder path must be configurable via the --output flag.
+</requirement>
+
+<requirement id="2" priority="high">
+MULTI-FILE SUPPORT: Automatically discover and process ALL files*.txt files in the CWD matching the pattern files.txt and files_*.txt (e.g. files.txt, files_1.txt, files_02.txt). Each discovered input file must produce its own set of arena/structure/compare outputs with a matching suffix inside the output folder (e.g. files_1.txt produces context_output/arena_1.txt, context_output/structure_1.txt, and context_output/compare_1.md).
+</requirement>
+
+<requirement id="3" priority="medium">
+FLEXIBLE files.txt FORMAT WITH WARNINGS: Support free text and comment lines before and after file path entries.
+- Ignore lines starting with '#' (comments) and blank lines (separators).
+- Any line that doesn't resolve to a valid existing file path must print a warning to stderr (e.g., "Warning: Invalid path skipped: [line content]"), but the tool must proceed to process the remaining valid paths instead of failing or silently ignoring typos.
+</requirement>
+
+<requirement id="4" priority="high">
+NON-INTERACTIVE BY DEFAULT & RESOLUTION RULES:
+- Remove all hardcoded input() prompts. The tool runs completely silently (non-interactively) by default.
+- Configuration precedence rule:
+  Command Line Flags > Interactive Prompts (if --interactive) > Settings File (.context/settings.json) > Hardcoded Defaults.
+- Add an --interactive CLI flag. When interactive mode is enabled, prompt the user for options in this exact order (where pressing Enter selects the default/setting value, and Space + Enter enables/overrides the option):
+  a. "Run Gemini auto-comparison? [Enter=skip, Space=run]: "
+  b. "Reduce tokens? Compact mode [Enter=skip, Space=enable]: "
+  c. "How many models? [Enter=2, Space=4]: "
+  d. "Output format? [Enter=.md, Space=.txt]: "
+</requirement>
+
+<requirement id="5" priority="high">
+ONE-TIME LEGACY MIGRATION: On first run, detect and migrate old-structure files to the new layout. This is a one-time operation — the old structure is NOT used or created going forward.
+- Detect old files: ``arena.txt``, ``structure.txt``, ``compare.md`` in CWD; ``models/`` directory at root (containing ``A.txt``, ``B.txt``, ``prompt.txt``, and optionally ``old/`` subdirectories with numbered archives).
+- Migration actions:
+  1. Move legacy CWD outputs (``arena.txt``, ``structure.txt``, ``compare.md`` + multi-file variants) into ``context_output/``.
+  2. Move ``root/models/`` into ``context_output/models/`` (preserving any ``old/N/`` history).
+  3. Move CWD ``files.txt`` / ``files_*.txt`` into ``.context/inputs/``.
+- Safety: if ``context_output/models/`` already exists and is non-empty, skip migration entirely (already done).
+- The old archive system (``models/ARCHIVE/``, ``models/old/N/``) is NOT used for new archives. After migration, model responses live directly at ``context_output/models/`` (flat: ``A.txt``, ``B.txt``, ``prompt.txt``). No subdirectories, no timestamps, no numbered archives.
+- When archiving is triggered (new comparison round), the tool simply clears the active model files (``A.txt``, ``B.txt``, etc.) and recreates empty templates. Previous responses are NOT preserved — the user is responsible for saving them before starting a new round if needed.
+</requirement>
+
+<requirement id="6" priority="medium">
+AUTO NOTES: Look for optional model notes files in models/ (e.g. A_NOTES.md or A_NOTES.txt matching the chosen output format extension). If a notes file exists for a model, insert its content under a "### Notes" section below that model's response in the compare output. If no notes file exists, do not write a "### Notes" section.
+</requirement>
+
+<requirement id="7" priority="medium">
+MODEL COUNT CHOICE & TEMPLATES: Detect existing model files (A.txt, B.txt, C.txt, D.txt). When model_count is configured to 4 but only A.txt and B.txt exist, auto-create empty C.txt and D.txt files and print: "Created empty C.txt and D.txt. Please paste their responses."
+</requirement>
+
+<requirement id="8" priority="high">
+INPUT ORGANIZATION: Move input file discovery from CWD to a dedicated subdirectory to avoid cluttering the project root with files.txt variants.
+- Primary discovery location: ``.context/inputs/`` inside the project root.
+- Fallback: if ``.context/inputs/`` does not exist or is empty, fall back to CWD ``files.txt`` for backward compatibility (quick one-off runs).
+- Auto-migrate: if ``files.txt`` (or ``files_*.txt``) exists in CWD on first run, move them into ``.context/inputs/`` and print a summary.
+- The tool discovers ALL ``*.txt`` files inside ``.context/inputs/`` (e.g. ``navbar-fix.txt``, ``api-refactor.txt``). Each discovered input produces its own numbered arena folder inside ``context_output/arenas/``.
+- Arena folder naming format: ``NNN-<arena-name>/`` where ``NNN`` is a 3-digit zero-padded auto-incrementing number starting from ``001``. Examples:
+  - First arena: ``context_output/arenas/001-fix-navbar-bug/``
+  - Second arena: ``context_output/arenas/002-refactor-api/``
+  - Re-running the same name: ``context_output/arenas/003-fix-navbar-bug/`` (never overwrites, always increments)
+- Each arena folder contains: ``arena.txt``, ``structure.txt``, ``compare.md``.
+- The next arena number is determined by scanning existing folders in ``context_output/arenas/`` and taking ``max(numbers) + 1``.
+- The agent (AI coding tool) is responsible for creating input files in ``.context/inputs/`` with descriptive names derived from the user's conversation/prompt (e.g. user asks "fix navbar bug" → agent creates ``.context/inputs/fix-navbar-bug.txt``).
+- Settings key: ``"inputs_dir": ".context/inputs"`` (configurable).
+- Add ``.context/inputs/`` and ``context_output/arenas/`` to ignore patterns so they are not aggregated into arena output.
+</requirement>
+
+<requirement id="9" priority="medium">
+MERGED CONFIGURATION DIRECTORY:
+- Store all configurations in a single `.context/` directory in the project root.
+- Read ignore patterns from `.context/ignore`. If missing, auto-create it with default patterns merged with built-in default ignore patterns (e.g. .git, node_modules, pycache, etc.). Add context_output/ and .context/ to the ignore patterns. Keep backwards compatibility: if `.contextignore` exists in the project root, read and merge its patterns as well.
+- Store persistent settings at `.context/settings.json`. If missing, auto-create it with defaults.
+</requirement>
+
+<requirement id="10" priority="high">
+PERSISTENT SETTINGS SCHEMA: The settings file (.context/settings.json) must conform to this schema:
+{
+  "output_dir": "context_output",
+  "output_format": "md",
+  "model_count": 2,
+  "gemini_judge": false,
+  "compact_mode": false,
+  "inputs_dir": ".context/inputs"
+}
+</requirement>
+
+<requirement id="11" priority="high">
+SETTINGS CLI flag: Add a --settings CLI flag. When passed, the script must print the path to the active `.context/settings.json`, display its current JSON content, and print instructions/template explaining how to edit/create it. Then exit cleanly.
+</requirement>
+</requirements>
+
+<edge_cases>
+<case id="1" input="empty files.txt" action="Create empty arena folder with empty templates (arena.txt, structure.txt, compare.md) inside context_output/arenas/NNN-name/." />
+<case id="2" input="invalid settings.json" action="Fall back to defaults. Print warning to stderr every run. If settings.json is completely empty, print: 'Use context skill with AI model to initialize preferences.'" />
+<case id="3" input="model_count=4 but only 2 files" action="Auto-create empty C.txt, D.txt. Prompt user to paste content." />
+<case id="4" input="arena name already has a numbered folder" action="Increment the number. If 001-fix-navbar exists, next is 002-fix-navbar. Never overwrite existing arenas." />
+<case id="5" input="context_output/ has old files" action="If in interactive mode: prompt 'Warn: Merge? [Enter=merge, Space=skip]'. If in non-interactive mode: default silently to auto-merging/overwriting." />
+<case id="6" input="GEMINI_API_KEY not set" action="Print a warning to stderr and skip the Gemini judge step. Do not throw an error or crash. Note: the .env containing GEMINI_API_KEY lives in the tool's root directory, not the project root." />
+<case id="7" input="notes extension mismatch" action="Only match notes files whose extensions match the chosen output extension (e.g. if output format is 'md', match A_NOTES.md, ignore A_NOTES.txt)." />
+<case id="8" input="old files in CWD" action="If in interactive mode: prompt 'Warn: Clean? [Enter=clean, Space=skip]'. If in non-interactive mode: default silently to skipping cleaning (do nothing to protect user files)." />
+<case id="9" input=".context/inputs/ does not exist" action="Fall back to CWD files.txt. If CWD files.txt also does not exist, print 'No input files found' and exit gracefully." />
+<case id="10" input="CWD files.txt exists on first run" action="Auto-migrate to .context/inputs/ and print summary. Original file is moved (not copied)." />
+<case id="11" input="root models/ has old/N/ archives" action="Move entire models/ into context_output/models/ during migration. Old archives are preserved but not used going forward. No new archives are created." />
+</edge_cases>
+
+<constraints>
+- Maintain backwards compatibility: running the tool with no arguments must still work seamlessly.
+- Accept an optional --output flag to override the output folder location.
+- Automatically add the output folder (e.g. context_output/) and the configuration folder (.context/) to parser ignore patterns.
+- Do not break the existing core/ module APIs or external integration assumptions.
+</constraints>
+
+<examples>
+<example>
+<files.txt>
+# Bug in navbar layout
+# CSS grid breaking on mobile < 768px
+
+C:/proj/src/components/Navbar.tsx
+C:/proj/src/components/Navbar.module.css
+C:/proj/src/layouts/MainLayout.tsx:45-80
+
+# TODO: check responsive breakpoints
+</files.txt>
+→ Parser extracts 3 valid paths, skips comment and blank lines, and prints warnings for any lines that are invalid paths (if any).
+</example>
+
+<example>
+<settings.json>
+{
+  "output_dir": "context_output",
+  "output_format": "txt",
+  "model_count": 4,
+  "gemini_judge": true,
+  "compact_mode": true,
+  "inputs_dir": ".context/inputs"
+}
+</settings.json>
+→ Run uses these settings silently. If --interactive is passed, these settings act as the default choices.
+</example>
+
+<example>
+<input-organization>
+.context/inputs/ contains:
+  fix-navbar-bug.txt       (agent created from "fix the navbar bug" conversation)
+  refactor-auth-api.txt    (agent created from "refactor auth API" conversation)
+
+Tool discovers both → produces:
+  context_output/arenas/001-fix-navbar-bug/arena.txt
+  context_output/arenas/001-fix-navbar-bug/structure.txt
+  context_output/arenas/001-fix-navbar-bug/compare.md
+  context_output/arenas/002-refactor-auth-api/arena.txt
+  context_output/arenas/002-refactor-auth-api/structure.txt
+  context_output/arenas/002-refactor-auth-api/compare.md
+
+Re-running fix-navbar-bug later → 003-fix-navbar-bug/ (never overwrites).
+Fallback: if .context/inputs/ doesn't exist, CWD files.txt is used instead.
+</input-organization>
+</example>
+
+<example>
+<legacy-migration>
+First run detects:
+  CWD: arena.txt, structure.txt, compare.md
+  root: models/A.txt, models/B.txt, models/prompt.txt, models/old/1/A.txt, models/old/2/A.txt
+
+After migration:
+  context_output/arena.txt (moved from CWD)
+  context_output/structure.txt (moved from CWD)
+  context_output/compare.md (moved from CWD)
+  context_output/models/A.txt (moved from root)
+  context_output/models/B.txt (moved from root)
+  context_output/models/prompt.txt (moved from root)
+  context_output/models/old/1/A.txt (preserved history)
+  context_output/models/old/2/A.txt (preserved history)
+  CWD: no legacy outputs remain
+  root: models/ directory removed
+</legacy-migration>
+</example>
+</examples>
+
+<deliverable>
+Implement this in three phases to ensure no code is truncated or skipped:
+
+PHASE 1 (DO THIS NOW):
+Update core/parser.py and core/judge.py according to the requirements. Include the new INPUT ORGANIZATION requirement (Req 8) — implement .context/inputs/ discovery, CWD fallback, auto-migration, and arena subfolder output structure. Provide the FULL, complete code for both files without omitting anything or using placeholders.
+
+PHASE 2 (WAIT FOR MY CUE):
+After you provide Phase 1, I will reply with "Continue to Phase 2", and then you will provide the complete, fully updated aggregator.py.
+
+PHASE 3 (IF NEEDED):
+Update aggregator_gui.py and aggregator_tui.py to support the new .context/inputs/ workflow and arena subfolder structure.
+
+Follow these quality guidelines:
+1. Write clean, idiomatic Python code.
+2. Maintain documentation integrity. Keep comments and docstrings.
+3. Validate user preferences defensively.
+4. Perform self-checks against the edge cases checklist before concluding.
+</deliverable>
