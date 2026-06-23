@@ -44,6 +44,12 @@ from core.parser import (
     read_file_paths,
     should_ignore,
     initialize_environment,
+    load_settings,
+    save_settings,
+    resolve_output_dir,
+    resolve_models_dir,
+    discover_files_txt,
+    migrate_old_outputs,
 )
 from core.counter import count_tokens
 from core.judge import (
@@ -53,13 +59,19 @@ from core.judge import (
     get_api_key,
     get_gemini_verdict,
     load_dotenv,
+    archive_model_responses,
+    ensure_model_templates,
 )
 
 # ── Fixed output paths (always relative to the aggregator project dir) ────────
 _FILES_TXT    = _PROJECT_DIR / "files.txt"
-_ARENA_TXT    = _PROJECT_DIR / "arena.txt"
-_STRUCTURE_TXT = _PROJECT_DIR / "structure.txt"
-_COMPARE_TXT  = _PROJECT_DIR / "compare.md"
+
+def _output_names(suffix: str, output_format: str) -> tuple[str, str, str]:
+    """Build the (arena, structure, compare) filenames for a given suffix."""
+    arena = f"arena{suffix}.txt"
+    structure = f"structure{suffix}.txt"
+    compare = f"compare{suffix}.{output_format}"
+    return arena, structure, compare
 
 # ── Catppuccin Mocha dark palette ─────────────────────────────────────────────
 _BG         = "#1e1e2e"   # base
@@ -254,6 +266,26 @@ class AggregatorGUI(tk.Tk):
         # State
         self._project_root: Path = self._detect_initial_root()
         self._busy: bool = False          # True while a background thread runs
+        self._settings: dict[str, object] = {}
+        self._suppress_settings_save: bool = False
+
+        # Settings Tkinter variables
+        self._judge_var = tk.BooleanVar(value=True)
+        self._compact_var = tk.BooleanVar(value=False)
+        self._archive_var = tk.BooleanVar(value=False)
+        self._output_dir_var = tk.StringVar(value="context_output")
+        self._model_count_var = tk.IntVar(value=2)
+        self._output_format_var = tk.StringVar(value="md")
+
+        # Load initial settings
+        self._load_and_apply_settings()
+
+        # Set up traces for instant auto-save (except for entry fields where we save on focus loss / enter)
+        self._judge_var.trace_add("write", self._save_current_settings)
+        self._compact_var.trace_add("write", self._save_current_settings)
+        self._archive_var.trace_add("write", self._save_current_settings)
+        self._model_count_var.trace_add("write", self._save_current_settings)
+        self._output_format_var.trace_add("write", self._save_current_settings)
 
         # UI setup
         self._setup_fonts()
@@ -265,37 +297,89 @@ class AggregatorGUI(tk.Tk):
 
     # ── Startup helpers ───────────────────────────────────────────────────────
 
+    @property
+    def files_txt_path(self) -> Path:
+        """Returns the project-root specific files.txt path."""
+        return self._project_root / "files.txt"
+
     def _detect_initial_root(self) -> Path:
-        """Guess project root from files.txt, falling back to the aggregator dir."""
-        if _FILES_TXT.is_file():
+        """Guess project root from files.txt in CWD or aggregator dir, falling back to CWD."""
+        for candidate_files_txt in (Path("files.txt"), _FILES_TXT):
+            if candidate_files_txt.is_file():
+                try:
+                    paths = read_file_paths(candidate_files_txt)
+                    if paths:
+                        root = find_project_root(paths[0])
+                        if root:
+                            return root
+                except Exception:
+                    pass
+        return Path.cwd().resolve()
+
+    def _load_and_apply_settings(self) -> None:
+        """Load settings from .context/settings.json of the current root and update GUI vars."""
+        self._settings = load_settings(self._project_root)
+        
+        self._suppress_settings_save = True
+        try:
+            self._judge_var.set(bool(self._settings.get("gemini_judge", False)))
+            self._compact_var.set(bool(self._settings.get("compact_mode", False)))
+            self._archive_var.set(bool(self._settings.get("archive", False)))
+            self._output_dir_var.set(str(self._settings.get("output_dir", "context_output")))
+            
             try:
-                paths = read_file_paths(_FILES_TXT)
-                if paths:
-                    root = find_project_root(paths[0])
-                    if root:
-                        return root
-            except Exception:
-                pass
-        return _PROJECT_DIR
+                count = int(self._settings.get("model_count", 2))
+                if count not in (2, 4):
+                    count = 2
+            except (ValueError, TypeError):
+                count = 2
+            self._model_count_var.set(count)
+            
+            fmt = str(self._settings.get("output_format", "md")).strip().lower().lstrip(".")
+            if fmt not in ("md", "txt"):
+                fmt = "md"
+            self._output_format_var.set(fmt)
+        finally:
+            self._suppress_settings_save = False
+
+    def _save_current_settings(self, *args) -> None:
+        """Save current GUI variables to the .context/settings.json of the current root."""
+        if self._suppress_settings_save:
+            return
+            
+        self._settings["gemini_judge"] = self._judge_var.get()
+        self._settings["compact_mode"] = self._compact_var.get()
+        self._settings["archive"] = self._archive_var.get()
+        self._settings["output_dir"] = self._output_dir_var.get().strip() or "context_output"
+        
+        try:
+            self._settings["model_count"] = int(self._model_count_var.get())
+        except ValueError:
+            self._settings["model_count"] = 2
+            
+        self._settings["output_format"] = self._output_format_var.get()
+        
+        try:
+            save_settings(self._project_root, self._settings)
+        except Exception as exc:
+            self._log_write(f"Could not save settings: {exc}", tag="warn")
 
     def _initialize_env_silent(self) -> None:
         """Call initialize_environment() without any blocking terminal prompts.
 
-        The GUI creates the folder structure silently; model-file count is
-        handled via the dedicated "Manage Model Files" workflow instead of
-        stdin.
+        Resolves the output directory and model count from active settings.
         """
         try:
-            models_dir = self._project_root / "models"
-            # Touch files.txt
-            if not _FILES_TXT.exists():
-                _FILES_TXT.touch()
+            # Touch files.txt in the active project root
+            if not self.files_txt_path.exists():
+                self.files_txt_path.touch()
 
-            # Create models/ and prompt.txt if absent
-            models_dir.mkdir(parents=True, exist_ok=True)
-            prompt_file = models_dir / "prompt.txt"
-            if not prompt_file.exists():
-                prompt_file.touch()
+            # Resolve output and models directory
+            output_dir = resolve_output_dir(self._project_root, self._settings)
+            model_count = self._model_count_var.get()
+
+            # Use initialize_environment
+            initialize_environment(self._project_root, model_count=model_count, output_dir=output_dir)
 
             self._log_write("Environment initialised.", tag="info")
         except Exception as exc:
@@ -441,7 +525,7 @@ class AggregatorGUI(tk.Tk):
         paned_v.pack(fill="both", expand=True)
 
         paned_v.add(self._build_queue_pane(paned_v),   minsize=160)
-        paned_v.add(self._build_options_pane(paned_v), minsize=80)
+        paned_v.add(self._build_options_pane(paned_v), minsize=140)
         paned_v.add(self._build_log_pane(paned_v),     minsize=140)
 
         return frame
@@ -493,7 +577,7 @@ class AggregatorGUI(tk.Tk):
         return frame
 
     def _build_options_pane(self, parent: tk.Widget) -> tk.Frame:
-        """Options panel: Gemini Judge toggle + compact mode toggle."""
+        """Options panel: Gemini Judge, Compact, Archive, Output Dir, Model Count, Format settings."""
         frame = tk.Frame(parent, bg=_BG_PANEL)
 
         tk.Label(
@@ -501,53 +585,117 @@ class AggregatorGUI(tk.Tk):
             text="⚙  Aggregation Options",
             bg=_BG_PANEL, fg=_ACCENT,
             font=self._font_title, anchor="w",
-        ).pack(fill="x", padx=10, pady=(10, 6))
+        ).pack(fill="x", padx=10, pady=(6, 4))
 
-        row = tk.Frame(frame, bg=_BG_PANEL)
-        row.pack(fill="x", padx=12)
+        # Row 1: Checkboxes
+        row1 = tk.Frame(frame, bg=_BG_PANEL)
+        row1.pack(fill="x", padx=12, pady=2)
 
         # Gemini Judge toggle
-        self._judge_var = tk.BooleanVar(value=True)
         tk.Checkbutton(
-            row,
-            text="🤖  Run Gemini AI Judge after aggregation",
+            row1,
+            text="🤖  Run Gemini Judge",
             variable=self._judge_var,
             bg=_BG_PANEL, fg=_FG,
             selectcolor=_BG_ENTRY,
             activebackground=_BG_PANEL, activeforeground=_FG,
             font=self._font_ui,
-        ).pack(side="left", padx=(0, 24))
+        ).pack(side="left", padx=(0, 16))
 
         # Compact mode toggle
-        self._compact_var = tk.BooleanVar(value=False)
         tk.Checkbutton(
-            row,
-            text="📦  Compact mode (strip Notes)",
+            row1,
+            text="📦  Compact mode",
             variable=self._compact_var,
+            bg=_BG_PANEL, fg=_FG,
+            selectcolor=_BG_ENTRY,
+            activebackground=_BG_PANEL, activeforeground=_FG,
+            font=self._font_ui,
+        ).pack(side="left", padx=(0, 16))
+
+        # Archive toggle
+        tk.Checkbutton(
+            row1,
+            text="🗄️  Archive on run",
+            variable=self._archive_var,
             bg=_BG_PANEL, fg=_FG,
             selectcolor=_BG_ENTRY,
             activebackground=_BG_PANEL, activeforeground=_FG,
             font=self._font_ui,
         ).pack(side="left")
 
+        # Row 2: Entry fields and selectors
+        row2 = tk.Frame(frame, bg=_BG_PANEL)
+        row2.pack(fill="x", padx=12, pady=4)
+
+        # Output Dir
+        tk.Label(
+            row2, text="Output Dir:", bg=_BG_PANEL, fg=_FG_DIM, font=self._font_ui
+        ).pack(side="left", padx=(0, 4))
+
+        out_dir_entry = tk.Entry(
+            row2,
+            textvariable=self._output_dir_var,
+            bg=_BG_ENTRY, fg=_FG,
+            insertbackground=_FG, relief="flat",
+            font=self._font_mono, width=16,
+        )
+        out_dir_entry.pack(side="left", padx=(0, 16))
+        
+        # Save output dir settings when losing focus or hitting Enter (avoid trace write spam)
+        out_dir_entry.bind("<FocusOut>", self._save_current_settings)
+        out_dir_entry.bind("<Return>", self._save_current_settings)
+
+        # Model Count
+        tk.Label(
+            row2, text="Models:", bg=_BG_PANEL, fg=_FG_DIM, font=self._font_ui
+        ).pack(side="left", padx=(0, 4))
+
+        model_count_combo = ttk.Combobox(
+            row2,
+            textvariable=self._model_count_var,
+            values=[2, 4],
+            state="readonly",
+            width=3,
+        )
+        model_count_combo.pack(side="left", padx=(0, 16))
+
+        # Output Format
+        tk.Label(
+            row2, text="Format:", bg=_BG_PANEL, fg=_FG_DIM, font=self._font_ui
+        ).pack(side="left", padx=(0, 4))
+
+        format_combo = ttk.Combobox(
+            row2,
+            textvariable=self._output_format_var,
+            values=["md", "txt"],
+            state="readonly",
+            width=4,
+        )
+        format_combo.pack(side="left", padx=(0, 16))
+
+        # Row 3: API Key row
+        row3 = tk.Frame(frame, bg=_BG_PANEL)
+        row3.pack(fill="x", padx=12, pady=(2, 6))
+
         # API key status label
         self._api_key_label = tk.Label(
-            frame,
+            row3,
             text=self._api_key_status_text(),
             bg=_BG_PANEL, fg=_FG_DIM,
             font=self._font_small, anchor="w",
         )
-        self._api_key_label.pack(fill="x", padx=12, pady=(4, 8))
+        self._api_key_label.pack(side="left", fill="x", expand=True)
 
         # "Set API Key" button
         tk.Button(
-            frame,
+            row3,
             text="🔑  Set / Update API Key",
             command=self._prompt_api_key_gui,
             bg=_BG_ENTRY, fg=_FG,
             relief="flat", font=self._font_small, cursor="hand2",
-            padx=10, pady=3,
-        ).pack(anchor="w", padx=12, pady=(0, 10))
+            padx=8, pady=1,
+        ).pack(side="right")
 
         return frame
 
@@ -680,11 +828,10 @@ class AggregatorGUI(tk.Tk):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _change_root(self, new_root: Path) -> None:
-        """Update internal root, clear queue, refresh everything."""
+        """Update internal root, load settings, and refresh everything."""
         self._project_root = new_root
         self._project_path_var.set(str(new_root))
-        # Clear queue when switching projects
-        _FILES_TXT.write_text("", encoding="utf-8")
+        self._load_and_apply_settings()
         self._initialize_env_silent()
         self._log_write(f"Root → {new_root}", tag="info")
         self._refresh_all()
@@ -783,23 +930,23 @@ class AggregatorGUI(tk.Tk):
 
     def _current_queue_entries(self) -> list:
         """Read files.txt and return the parsed entry list (may be empty)."""
-        if not _FILES_TXT.is_file():
+        if not self.files_txt_path.is_file():
             return []
         try:
-            return read_file_entries(_FILES_TXT)
+            return read_file_entries(self.files_txt_path)
         except Exception:
             return []
 
     def _write_queue_lines(self, lines: list[str]) -> None:
         """Overwrite files.txt with *lines* (one entry per line)."""
         content = "\n".join(lines) + ("\n" if lines else "")
-        _FILES_TXT.write_text(content, encoding="utf-8")
+        self.files_txt_path.write_text(content, encoding="utf-8")
 
     def _refresh_queue(self) -> None:
         """Repopulate the queue Listbox from files.txt."""
         self._queue_listbox.delete(0, "end")
 
-        if not _FILES_TXT.is_file():
+        if not self.files_txt_path.is_file():
             self._queue_title.configure(text="📋  Queue  (0 entries)")
             return
 
@@ -807,7 +954,7 @@ class AggregatorGUI(tk.Tk):
         # (snippet ranges, ! prefix) without re-serialising through Path
         raw_lines = [
             l.strip()
-            for l in _FILES_TXT.read_text(encoding="utf-8").splitlines()
+            for l in self.files_txt_path.read_text(encoding="utf-8").splitlines()
             if l.strip() and not l.strip().startswith("#")
         ]
 
@@ -836,10 +983,10 @@ class AggregatorGUI(tk.Tk):
 
         # Read existing raw lines to avoid duplicates while preserving order
         existing_lines: list[str] = []
-        if _FILES_TXT.is_file():
+        if self.files_txt_path.is_file():
             existing_lines = [
                 l.strip()
-                for l in _FILES_TXT.read_text(encoding="utf-8").splitlines()
+                for l in self.files_txt_path.read_text(encoding="utf-8").splitlines()
                 if l.strip() and not l.strip().startswith("#")
             ]
 
@@ -884,7 +1031,7 @@ class AggregatorGUI(tk.Tk):
 
         existing_lines = [
             l.strip()
-            for l in _FILES_TXT.read_text(encoding="utf-8").splitlines()
+            for l in self.files_txt_path.read_text(encoding="utf-8").splitlines()
             if l.strip() and not l.strip().startswith("#")
         ]
         indices_set = set(indices)
@@ -897,7 +1044,7 @@ class AggregatorGUI(tk.Tk):
     def _clear_queue(self) -> None:
         if not messagebox.askyesno("Confirm", "Clear all entries from the queue?"):
             return
-        _FILES_TXT.write_text("", encoding="utf-8")
+        self.files_txt_path.write_text("", encoding="utf-8")
         self._log_write("Queue cleared.", tag="warn")
         self._refresh_all()
 
@@ -930,140 +1077,184 @@ class AggregatorGUI(tk.Tk):
 
         Steps
         -----
-        1.  Read & validate entries from files.txt.
-        2.  Detect project root + load ignore patterns.
-        3.  Write structure.txt (directory tree).
-        4.  Write arena.txt   (aggregated content).
-        5.  Count tokens and report.
-        6.  Collect model responses from models/.
-        7.  Optionally call Gemini AI Judge.
-        8.  Write compare.md.
+        1.  Load settings & resolve output/models directory.
+        2.  Migrate legacy outputs & initialize environment.
+        3.  Run archiving workflow if requested.
+        4.  Discover files*.txt inputs in project root.
+        5.  For each discovered input:
+            a. Read & validate entries.
+            b. Generate project structure.txt.
+            c. Aggregate files to arena.txt.
+            d. Estimate token count.
+            e. Collect model responses.
+            f. Run Gemini AI Judge.
+            g. Write compare markdown.
         """
         try:
-            # ── Step 1: read entries ──────────────────────────────────────────
-            self._step("Reading files.txt …")
-            entries = read_file_entries(_FILES_TXT)
-            if not entries:
-                self._log_write("Queue is empty — nothing to aggregate.", tag="warn")
-                self._set_status("Empty queue.")
+            root = self._project_root
+            self._step("Loading settings …")
+            settings = load_settings(root)
+
+            output_dir = resolve_output_dir(root, settings)
+            models_dir = resolve_models_dir(output_dir)
+            output_format = str(settings.get("output_format", "md"))
+            gemini_judge = bool(settings.get("gemini_judge", False))
+            compact_mode = bool(settings.get("compact_mode", False))
+            archive = bool(settings.get("archive", False))
+            model_count = int(settings.get("model_count", 2))
+
+            # --- Migration ----------------------------------------------------
+            self._step("Migrating legacy outputs if needed …")
+            migrate_old_outputs(root, output_dir)
+
+            # --- Environment Initialization -----------------------------------
+            self._step("Initializing environment …")
+            initialize_environment(root, model_count, output_dir)
+
+            # --- Ensure model templates for chosen count ----------------------
+            ensure_model_templates(root, model_count, models_dir)
+
+            # --- Archiving workflow -------------------------------------------
+            if archive:
+                self._step("Archiving model responses …")
+                archive_dir = str(settings.get("archive_dir", "models/old"))
+                archive_scheme = str(settings.get("archive_scheme", "numbered"))
+                archived = archive_model_responses(
+                    root, archive_dir, models_dir, archive_scheme,
+                )
+                if archived:
+                    ensure_model_templates(root, model_count, models_dir)
+                    self._log_write(f"Archived {len(archived)} response(s) to {archive_dir}.", tag="ok")
+
+            # --- Discover files*.txt ------------------------------------------
+            self._step("Discovering files*.txt in project root …")
+            discovered = discover_files_txt(root)
+            if not discovered:
+                self._log_write("No files*.txt found in project root — nothing to do.", tag="warn")
+                self._set_status("No inputs found.")
                 return
 
-            # Count entry types for reporting
-            n_full      = sum(1 for _, r, _i in entries if r is None)
-            n_snippets  = sum(1 for _, r,  i in entries if r is not None and not i)
-            n_important = sum(1 for _, r,  i in entries if r is not None and i)
-
-            summary_parts = []
-            if n_full:      summary_parts.append(f"{n_full} file(s)")
-            if n_snippets:  summary_parts.append(f"{n_snippets} snippet(s)")
-            if n_important: summary_parts.append(f"{n_important} structure(s)")
-            self._log_write(f"Queue: {' + '.join(summary_parts)}", tag="info")
-
-            # ── Step 2: detect root ───────────────────────────────────────────
-            self._step("Detecting project root …")
-            root = find_project_root(entries[0][0]) or self._project_root
             patterns = load_ignore_patterns(root)
-            self._log_write(f"Root: {root}", tag="info")
+            processed_count = 0
+            total_tokens = 0
 
-            # ── Writable checks (fail fast) ───────────────────────────────────
-            for out_path in (_ARENA_TXT, _STRUCTURE_TXT, _COMPARE_TXT):
-                _assert_writable(out_path)
+            for files_input, suffix in discovered:
+                self._step(f"Processing {files_input.name} …")
 
-            # ── Step 3: project tree ──────────────────────────────────────────
-            self._step("Generating project tree …")
-            tree_lines = [f"Project Root: {root.name}/"] + generate_tree(
-                root, root, patterns
-            )
-            _STRUCTURE_TXT.write_text("\n".join(tree_lines), encoding="utf-8")
-            self._log_write(f"structure.txt written  ({root.name}/)", tag="ok")
+                arena_name, structure_name, compare_name = _output_names(suffix, output_format)
+                arena_path = output_dir / arena_name
+                structure_path = output_dir / structure_name
+                compare_path = output_dir / compare_name
 
-            # ── Step 4: aggregate ─────────────────────────────────────────────
-            self._step("Aggregating files …")
-            aggregate_files(entries, _ARENA_TXT, root)
-            self._log_write("arena.txt written.", tag="ok")
+                # Writable checks (fail fast)
+                for out_path in (arena_path, structure_path, compare_path):
+                    _assert_writable(out_path)
 
-            # ── Step 5: token count ───────────────────────────────────────────
-            self._step("Counting tokens …")
-            try:
-                arena_content = _ARENA_TXT.read_text(encoding="utf-8")
-                token_count   = count_tokens(arena_content)
-                char_count    = len(arena_content)
-                # Traffic-light status
-                if token_count >= 128_000:
-                    tok_tag = "error"
-                    tok_icon = "🔴"
-                elif token_count >= 80_000:
-                    tok_tag = "warn"
-                    tok_icon = "🟡"
-                else:
-                    tok_tag = "ok"
-                    tok_icon = "🟢"
-                self._log_write(
-                    f"{tok_icon}  {char_count:,} chars | ~{token_count:,} tokens",
-                    tag=tok_tag,
+                # ── Step 1: Read entries ──────────────────────────────────────
+                entries = read_file_entries(files_input)
+                if not entries:
+                    self._log_write(f"[{files_input.name}] Queue is empty — writing empty templates.", tag="warn")
+                    arena_path.write_text("", encoding="utf-8")
+                    structure_path.write_text("", encoding="utf-8")
+                    generate_compare_template(compare_path, model_count)
+                    continue
+
+                # Count entry types for reporting
+                n_full      = sum(1 for _, r, _i in entries if r is None)
+                n_snippets  = sum(1 for _, r,  i in entries if r is not None and not i)
+                n_important = sum(1 for _, r,  i in entries if r is not None and i)
+
+                summary_parts = []
+                if n_full:      summary_parts.append(f"{n_full} file(s)")
+                if n_snippets:  summary_parts.append(f"{n_snippets} snippet(s)")
+                if n_important: summary_parts.append(f"{n_important} structure(s)")
+                self._log_write(f"[{files_input.name}] Queue: {' + '.join(summary_parts)}", tag="info")
+
+                # ── Step 2: Project tree ──────────────────────────────────────
+                tree_lines = [f"Project Root: {root.name}/"] + generate_tree(
+                    root, root, patterns
                 )
-                self._set_status(f"~{token_count:,} tokens")
-            except Exception as exc:
-                self._log_write(f"Token count warning: {exc}", tag="warn")
-                token_count = None
+                structure_path.write_text("\n".join(tree_lines), encoding="utf-8")
+                self._log_write(f"[{files_input.name}] structure written → {structure_name}", tag="ok")
 
-            # ── Step 6: collect model responses ──────────────────────────────
-            self._step("Checking models/ directory …")
-            prompt, models_data = collect_model_responses(root)
+                # ── Step 3: Aggregate ─────────────────────────────────────────
+                aggregate_files(entries, arena_path, root)
+                self._log_write(f"[{files_input.name}] arena written → {arena_name}", tag="ok")
 
-            if not models_data:
-                # No model files → write blank template and stop
-                generate_compare_template(_COMPARE_TXT)
+                # ── Step 4: Token count ───────────────────────────────────────
+                try:
+                    arena_content = arena_path.read_text(encoding="utf-8")
+                    token_count   = count_tokens(arena_content)
+                    total_tokens += token_count
+                    char_count    = len(arena_content)
+                    
+                    if token_count >= 128_000:
+                        tok_tag = "error"
+                        tok_icon = "🔴"
+                    elif token_count >= 80_000:
+                        tok_tag = "warn"
+                        tok_icon = "🟡"
+                    else:
+                        tok_tag = "ok"
+                        tok_icon = "🟢"
+                    self._log_write(
+                        f"[{files_input.name}] {tok_icon}  {char_count:,} chars | ~{token_count:,} tokens",
+                        tag=tok_tag,
+                    )
+                except Exception as exc:
+                    self._log_write(f"[{files_input.name}] Token count warning: {exc}", tag="warn")
+
+                # ── Step 5: Collect model responses ──────────────────────────
+                prompt, models_data = collect_model_responses(root, output_format, models_dir)
+
+                if not models_data:
+                    generate_compare_template(compare_path, model_count)
+                    self._log_write(
+                        f"[{files_input.name}] No model responses found — blank template written.",
+                        tag="warn",
+                    )
+                    processed_count += 1
+                    continue
+
                 self._log_write(
-                    "No model responses found — blank compare.md template written.",
-                    tag="warn",
+                    f"[{files_input.name}] Found {len(models_data)} model response(s) in models/", tag="ok"
                 )
-                self._set_status("Done (no models).")
-                return
 
-            self._log_write(
-                f"Found {len(models_data)} model response(s) in models/", tag="ok"
-            )
+                # ── Step 6: Gemini AI Judge (optional) ────────────────────────
+                verdict: Optional[str] = None
+                if gemini_judge:
+                    self._step(f"[{files_input.name}] Running Gemini AI Judge …")
+                    api_key = self._resolve_api_key_for_thread(root)
 
-            # ── Step 7: Gemini AI Judge (optional) ───────────────────────────
-            verdict: Optional[str] = None
-            if self._judge_var.get():
-                self._step("Running Gemini AI Judge …")
-                api_key = self._resolve_api_key_for_thread(root)
+                    if api_key:
+                        try:
+                            verdict = get_gemini_verdict(prompt, models_data, api_key)
+                            self._log_write(f"[{files_input.name}] Gemini verdict received ✓", tag="judge")
+                        except Exception as exc:
+                            self._log_write(
+                                f"[{files_input.name}] Gemini API error: {exc} (falling back to manual template)",
+                                tag="error",
+                            )
+                    else:
+                        self._log_write(f"[{files_input.name}] No API key — skipping Gemini Judge.", tag="warn")
 
-                if api_key:
-                    try:
-                        verdict = get_gemini_verdict(prompt, models_data, api_key)
-                        self._log_write("Gemini verdict received ✓", tag="judge")
-                    except Exception as exc:
-                        self._log_write(
-                            f"Gemini API error: {exc}  (falling back to manual template)",
-                            tag="error",
-                        )
-                else:
-                    self._log_write("No API key — skipping Gemini Judge.", tag="warn")
-            else:
-                self._log_write("Gemini Judge disabled by user.", tag="info")
-
-            # ── Step 8: write compare.md ──────────────────────────────────────
-            self._step("Writing compare.md …")
-            compact = self._compact_var.get()
-            build_compare_markdown(
-                prompt, models_data, _COMPARE_TXT,
-                verdict=verdict, compact=compact,
-            )
-            src       = "models/" if (root / "models").is_dir() else "llm.txt"
-            mode_str  = " [COMPACT]" if compact else ""
-            judge_str = " + Gemini Judge" if verdict else ""
-            self._log_write(
-                f"compare.md written from {src}  ({len(models_data)} models){mode_str}{judge_str}",
-                tag="ok",
-            )
+                # ── Step 7: Write comparison ──────────────────────────────────
+                build_compare_markdown(
+                    prompt, models_data, compare_path,
+                    verdict=verdict, compact=compact_mode,
+                )
+                mode_str  = " [COMPACT]" if compact_mode else ""
+                judge_str = " + Gemini Judge" if verdict else ""
+                self._log_write(
+                    f"[{files_input.name}] compare written → {compare_name}  ({len(models_data)} models){mode_str}{judge_str}",
+                    tag="ok",
+                )
+                processed_count += 1
 
             # ── Final status ──────────────────────────────────────────────────
-            final = f"Done — {len(entries)} entries"
-            if token_count is not None:
-                final += f", ~{token_count:,} tokens"
+            final = f"Done — processed {processed_count} input(s)"
+            if total_tokens > 0:
+                final += f", ~{total_tokens:,} total tokens"
             self._set_status(final)
             self._log_write("─" * 48, tag="info")
             self._log_write("Aggregation complete ✓", tag="ok")

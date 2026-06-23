@@ -81,7 +81,10 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "gemini_judge": False,
     "compact_mode": False,
     "archive": False,
-    "archive_dir": "models/ARCHIVE",
+    "archive_dir": "models/old",
+    # "numbered" → old/N/{A,B,...}.txt (full round snapshots, default).
+    # "timestamp" → ARCHIVE/<name>_<YYYYMMDD_HHMMSS>.<ext> (legacy/prompt.txt).
+    "archive_scheme": "numbered",
 }
 
 # Template written to .context/ignore when auto-created (Req 8)
@@ -247,19 +250,31 @@ def display_settings(root: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def initialize_environment(root: Path, model_count: int = 2) -> None:
+def initialize_environment(
+    root: Path,
+    model_count: int = 2,
+    output_dir: Path | None = None,
+) -> None:
     """Ensure required files and directories exist.
 
     Non-interactive by default (Req 4).  Creates ``files.txt`` in the
-    current working directory and a ``models/`` folder under *root* when
-    they are missing.  If the ``models/`` folder contains no model
-    response files (excluding ``prompt.txt`` and ``*_NOTES.*`` files),
-    empty template files (``A.txt``, ``B.txt``, …) are created based on
-    *model_count*.
+    current working directory and a ``models/`` folder when it is
+    missing.  If the ``models/`` folder contains no model response files
+    (excluding ``prompt.txt`` and ``*_NOTES.*`` files), empty template
+    files (``A.txt``, ``B.txt``, …) are created based on *model_count*.
+
+    The models directory location:
+
+    * If *output_dir* is given, models live at ``output_dir/models/``
+      (the canonical post-migration location).
+    * If *output_dir* is ``None``, models fall back to ``root/models/``
+      (backwards-compatible behaviour for older callers/TUI/GUI).
 
     Args:
-        root: Project root directory where ``models/`` will be created.
+        root: Project root directory.
         model_count: Number of model template files to create if none exist.
+        output_dir: Resolved output directory. When provided, the models
+                    directory is created under it rather than under *root*.
     """
     # 1. Ensure files.txt exists (in CWD)
     files_txt = Path("files.txt")
@@ -267,11 +282,14 @@ def initialize_environment(root: Path, model_count: int = 2) -> None:
         _ = files_txt.touch()
         print(f"Created {files_txt}")
 
-    # 2. Ensure models/ directory exists (under root)
-    models_dir = root / "models"
-    if not models_dir.is_dir():
-        models_dir.mkdir(parents=True, exist_ok=True)
-        print(f"Created {models_dir}/")
+    # 2. Ensure models/ directory exists
+    if output_dir is not None:
+        models_dir = resolve_models_dir(output_dir)
+    else:
+        models_dir = root / "models"
+        if not models_dir.is_dir():
+            models_dir.mkdir(parents=True, exist_ok=True)
+            print(f"Created {models_dir}/")
 
     # 3. Ensure prompt.txt exists in models/
     prompt_file = models_dir / "prompt.txt"
@@ -866,3 +884,153 @@ def resolve_output_dir(
     output_dir = root / str(dir_name)
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
+
+
+# ---------------------------------------------------------------------------
+# Canonical models directory (lives under the output dir)
+# ---------------------------------------------------------------------------
+
+
+def resolve_models_dir(output_dir: Path) -> Path:
+    """Return the canonical models directory: ``output_dir/models/``.
+
+    The models directory is created if it does not already exist.
+
+    Args:
+        output_dir: Resolved output directory (e.g. ``context_output/``).
+
+    Returns:
+        Path to the models directory, guaranteed to exist.
+    """
+    models_dir = output_dir / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    return models_dir
+
+
+# ---------------------------------------------------------------------------
+# Legacy-output migration (replaces the old EC8 cleanup)
+# ---------------------------------------------------------------------------
+
+# Legacy output files written by older versions of the tool directly into CWD.
+_LEGACY_OUTPUT_FILES: tuple[str, ...] = (
+    "arena.txt",
+    "structure.txt",
+    "compare.md",
+    "compare.txt",
+)
+_LEGACY_OUTPUT_GLOBS: tuple[str, ...] = (
+    "arena_*.txt",
+    "structure_*.txt",
+    "compare_*.md",
+    "compare_*.txt",
+)
+
+
+def _output_dir_already_populated(output_dir: Path) -> bool:
+    """Return True if *output_dir* already holds a migrated ``models/`` dir.
+
+    Only checks for ``models/`` — output files (arena, structure, compare)
+    are regenerated each run and safe to overwrite.  The guard prevents
+    double-moving ``root/models/`` when migration already ran.
+    """
+    models_dir = output_dir / "models"
+    return models_dir.is_dir() and any(models_dir.iterdir())
+
+
+def _resolve_migration_dest(output_dir: Path, name: str) -> Path:
+    """Pick a non-colliding destination filename inside *output_dir*.
+
+    Appends ``_migrated_N`` before the extension if the target already
+    exists (e.g. ``arena_migrated_1.txt``).
+    """
+    dest = output_dir / name
+    if not dest.exists():
+        return dest
+    stem = Path(name).stem
+    suffix = Path(name).suffix
+    counter = 1
+    while True:
+        candidate = output_dir / f"{stem}_migrated_{counter}{suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
+def migrate_old_outputs(root: Path, output_dir: Path) -> list[Path]:
+    """Move legacy CWD outputs and root ``models/`` into *output_dir*.
+
+    Non-destructive migration that consolidates the pre-output-folder
+    layout into the canonical ``output_dir/``:
+
+    * Legacy output files (``arena.txt``, ``structure.txt``,
+      ``compare.md``, ``compare.txt`` and their ``_*`` multi-file
+      variants) are moved from the CWD into ``output_dir/``.
+    * ``root/models/`` — if it exists — is moved in its entirety into
+      ``output_dir/models/``, preserving any ``old/N`` history and the
+      active response files.
+
+    Files that are NOT touched: ``files*.txt``, ``.context/``, ``.env``,
+    ``context.txt`` (not a tool output), ``llm.txt``.
+
+    Safety guard: if *output_dir* already contains tool outputs or a
+    non-empty ``models/`` directory, migration is skipped entirely to
+    protect existing data (the caller may have already migrated).
+
+    Args:
+        root: Project root directory (where the legacy ``models/`` lives).
+        output_dir: Resolved output directory to migrate INTO.
+
+    Returns:
+        List of paths that were moved (empty if nothing was migrated).
+    """
+    import shutil
+
+    cwd = Path.cwd()
+    moved: list[Path] = []
+
+    # Guard: never migrate into an already-populated output dir.
+    if _output_dir_already_populated(output_dir):
+        return moved
+
+    # 1. Move legacy output files from CWD → output_dir/.
+    cwd_legacy: list[Path] = []
+    for name in _LEGACY_OUTPUT_FILES:
+        p = cwd / name
+        if p.is_file():
+            cwd_legacy.append(p)
+    for glob in _LEGACY_OUTPUT_GLOBS:
+        cwd_legacy.extend(p for p in cwd.glob(glob) if p.is_file())
+
+    for src in cwd_legacy:
+        dest = _resolve_migration_dest(output_dir, src.name)
+        _ = shutil.move(str(src), str(dest))
+        moved.append(dest)
+
+    # 2. Move root/models/ → output_dir/models/ (whole tree, one move).
+    root_models = root / "models"
+    if root_models.is_dir():
+        dest_models = output_dir / "models"
+        if dest_models.exists():
+            # Merge case: dest models/ exists but (per guard above) is
+            # empty — move individual top-level entries instead.
+            for entry in list(root_models.iterdir()):
+                target = dest_models / entry.name
+                if target.exists():
+                    target = _resolve_migration_dest(dest_models, entry.name)
+                _ = shutil.move(str(entry), str(target))
+                moved.append(target)
+            try:
+                root_models.rmdir()
+            except OSError:
+                pass
+        else:
+            _ = shutil.move(str(root_models), str(dest_models))
+            moved.append(dest_models)
+
+    if moved:
+        names = ", ".join(
+            p.name if p.is_file() else f"{p.name}/" for p in moved
+        )
+        print(f"Migrated: {names} → {output_dir}/")
+
+    return moved

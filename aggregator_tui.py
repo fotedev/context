@@ -37,10 +37,8 @@ from aggregator import (  # noqa: E402
     find_project_root,
     generate_tree,
     load_ignore_patterns,
-    read_file_paths,
-    should_ignore,
 )
-from core.parser import read_file_entries
+from core.parser import read_file_entries, read_file_paths, should_ignore
 from core.counter import count_tokens
 from core.judge import collect_model_responses, get_gemini_verdict, build_compare_markdown
 

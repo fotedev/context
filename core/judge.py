@@ -195,6 +195,7 @@ def get_gemini_verdict(
 def collect_model_responses(
     root: Path | None,
     output_format: str = "md",
+    models_dir: Path | None = None,
 ) -> tuple[str, list[dict[str, str]]]:
     """Auto-discover model responses and notes from the ``models/`` directory.
 
@@ -210,13 +211,17 @@ def collect_model_responses(
     Args:
         root: Project root directory (or ``None`` for CWD).
         output_format: Extension for notes matching (``"md"`` or ``"txt"``).
+        models_dir: Canonical models directory (e.g. ``output_dir/models``).
+                    When ``None``, falls back to ``root/models/`` for
+                    backwards compatibility.
 
     Returns:
         Tuple of ``(prompt_text, models_data)`` where each entry in
         *models_data* has keys ``name``, ``response``, and ``notes``.
     """
     target_root = root if root is not None else Path.cwd()
-    models_dir = target_root / "models"
+    if models_dir is None:
+        models_dir = target_root / "models"
     llm_txt = target_root / "llm.txt"
 
     if models_dir.is_dir():
@@ -452,35 +457,113 @@ def generate_compare_template(
 
 def archive_model_responses(
     root: Path,
-    archive_dir: str = "models/ARCHIVE",
+    archive_dir: str = "models/old",
+    models_dir: Path | None = None,
+    archive_scheme: str = "numbered",
 ) -> list[Path]:
-    """Archive current model responses with timestamps.
+    """Archive current model responses.
 
-    For each model response file (e.g. ``A.txt``, ``B.txt``) currently
-    in ``models/``, move it to the archive directory renamed with a
-    timestamp in the pattern ``<name>_<YYYYMMDD_HHMMSS>.<ext>``.
+    Supports two archive schemes:
 
-    Corresponding notes files (``<name>_NOTES.md`` or
-    ``<name>_NOTES.txt``) are also archived.
+    **numbered** (default — ``old/N/``):
+      Moves all active model files (``A.txt``, ``B.txt``, …),
+      their notes, and ``prompt.txt`` into a numbered snapshot folder
+      (e.g. ``models/old/3/``). Files keep their original names.
+      The next number is auto-incremented by scanning existing
+      numbered subdirectories.
 
-    If the destination filename already exists, a counter is appended
-    before the extension (e.g. ``A_20260622_143022_1.txt``) — Edge case 4.
+    **timestamp** (legacy — ``ARCHIVE/``):
+      Moves each file individually with a timestamp suffix
+      (e.g. ``A_20260622_143022.txt``). Collision-safe via
+      ``_1``, ``_2`` suffixes.
 
     Args:
-        root: Project root directory.
-        archive_dir: Relative path to archive directory from root.
+        root: Project root directory (used only as a fallback anchor).
+        archive_dir: Relative path to the archive directory from *root*
+                     (or the models dir parent, depending on *models_dir*).
+        models_dir: Canonical models directory. When ``None``, falls back
+                    to ``root/models/`` for backwards compatibility.
+        archive_scheme: ``"numbered"`` or ``"timestamp"``.
 
     Returns:
         List of paths to the archived files.
     """
-    models_dir = root / "models"
+    if models_dir is None:
+        models_dir = root / "models"
     if not models_dir.is_dir():
         print("Warning: models/ directory not found — nothing to archive.", file=sys.stderr)
         return []
 
-    archive_path = root / archive_dir
-    archive_path.mkdir(parents=True, exist_ok=True)
+    # Determine archive base directory — anchored to models_dir's parent
+    # so archives always sit next to active models regardless of where
+    # models_dir lives.
+    archive_base = models_dir.parent / archive_dir
+    archive_base.mkdir(parents=True, exist_ok=True)
 
+    archived: list[Path] = []
+
+    if archive_scheme == "numbered":
+        archived = _archive_numbered(models_dir, archive_base)
+    else:
+        archived = _archive_timestamped(models_dir, archive_base)
+
+    return archived
+
+
+def _archive_numbered(models_dir: Path, archive_base: Path) -> list[Path]:
+    """Numbered snapshot: move active files into ``old/N/`` preserving names.
+
+    Scans existing numbered subdirs (``1``, ``2``, …) and picks
+    ``max + 1`` as the new snapshot number.
+
+    Moves: ``A.txt``, ``B.txt``, … model files, any ``*_NOTES.md/.txt``
+    notes files, and ``prompt.txt``.
+    """
+    # Determine next snapshot number
+    existing_numbers: set[int] = set()
+    if archive_base.is_dir():
+        for entry in archive_base.iterdir():
+            if entry.is_dir() and entry.name.isdigit():
+                existing_numbers.add(int(entry.name))
+    next_num = max(existing_numbers, default=0) + 1
+
+    snapshot_dir = archive_base / str(next_num)
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+    archived: list[Path] = []
+
+    # Move all active model response files + prompt.txt + notes
+    for f in sorted(models_dir.iterdir()):
+        if not f.is_file():
+            continue
+        # Model files: single uppercase letter + .txt
+        if re.match(r"^[A-Z]\.txt$", f.name):
+            dest = snapshot_dir / f.name
+            _ = shutil.move(str(f), str(dest))
+            archived.append(dest)
+            print(f"Archived {f.name} → {dest.relative_to(archive_base)}")
+        # Notes files matching model names
+        elif re.match(r"^[A-Z]_NOTES\.(md|txt)$", f.name, re.IGNORECASE):
+            dest = snapshot_dir / f.name
+            _ = shutil.move(str(f), str(dest))
+            archived.append(dest)
+            print(f"Archived {f.name} → {dest.relative_to(archive_base)}")
+        # prompt.txt
+        elif f.name == "prompt.txt":
+            dest = snapshot_dir / "prompt.txt"
+            _ = shutil.move(str(f), str(dest))
+            archived.append(dest)
+            print(f"Archived prompt.txt → {dest.relative_to(archive_base)}")
+
+    return archived
+
+
+def _archive_timestamped(models_dir: Path, archive_base: Path) -> list[Path]:
+    """Timestamp archive: move files with ``<name>_<YYYYMMDD_HHMMSS>.<ext>``.
+
+    Legacy behaviour from prompt.txt Req 5. Collision-safe via
+    ``_resolve_archive_path``.
+    """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     archived: list[Path] = []
 
@@ -505,7 +588,7 @@ def archive_model_responses(
     for src_file in all_files_to_archive:
         name = src_file.stem  # e.g. "A" or "A_NOTES"
         ext = src_file.suffix  # e.g. ".txt" or ".md"
-        dest = _resolve_archive_path(archive_path, name, ext, timestamp)
+        dest = _resolve_archive_path(archive_base, name, ext, timestamp)
         _ = shutil.move(str(src_file), str(dest))
         archived.append(dest)
         print(f"Archived {src_file.name} → {dest.name}")
@@ -547,20 +630,27 @@ def _resolve_archive_path(
 # ---------------------------------------------------------------------------
 
 
-def ensure_model_templates(root: Path, model_count: int = 2) -> list[str]:
+def ensure_model_templates(
+    root: Path,
+    model_count: int = 2,
+    models_dir: Path | None = None,
+) -> list[str]:
     """Ensure model template files exist for the given count.
 
     If *model_count* is 4 but only ``A.txt`` and ``B.txt`` exist,
     creates empty ``C.txt`` and ``D.txt`` files — Edge case 3.
 
     Args:
-        root: Project root directory.
+        root: Project root directory (fallback anchor).
         model_count: Number of model files to ensure exist.
+        models_dir: Canonical models directory. When ``None``, falls back
+                    to ``root/models/`` for backwards compatibility.
 
     Returns:
         List of newly created model names (e.g. ``['C', 'D']``).
     """
-    models_dir = root / "models"
+    if models_dir is None:
+        models_dir = root / "models"
     if not models_dir.is_dir():
         models_dir.mkdir(parents=True, exist_ok=True)
 

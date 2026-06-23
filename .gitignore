@@ -12,3 +12,6 @@ __pycache__
 .env
 .env.local
 /models
+aggregator_gui.py.log
+aggregator_tui.py.log
+/context_output
