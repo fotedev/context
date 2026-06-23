@@ -6,10 +6,11 @@ from __future__ import annotations
 
 import sys
 import fnmatch
+import functools
 import json
 import re
 from pathlib import Path
-from typing import cast
+from typing import cast, Iterator
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -81,7 +82,8 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "gemini_judge": False,
     "compact_mode": False,
     "archive": False,
-    "archive_dir": "models/ARCHIVE",
+    "archive_dir": "ARCHIVE",
+    "inputs_dir": ".context/inputs",
 }
 
 # Template written to .context/ignore when auto-created (Req 8)
@@ -255,47 +257,13 @@ def initialize_environment(
     """Ensure required files and directories exist.
 
     Non-interactive by default (Req 4).  Creates ``files.txt`` in the
-    current working directory and a ``models/`` folder when it is
-    missing.  If the ``models/`` folder contains no model response files
-    (excluding ``prompt.txt`` and ``*_NOTES.*`` files), empty template
-    files (``A.txt``, ``B.txt``, …) are created based on *model_count*.
-
-    The models directory location:
-
-    * If *output_dir* is given, models live at ``output_dir/models/``
-      (the canonical post-migration location).
-    * If *output_dir* is ``None``, models fall back to ``root/models/``
-      (backwards-compatible behaviour for older callers/TUI/GUI).
-
-    Args:
-        root: Project root directory.
-        model_count: Number of model template files to create if none exist.
-        output_dir: Resolved output directory. When provided, the models
-                    directory is created under it rather than under *root*.
+    current working directory.
     """
     # 1. Ensure files.txt exists (in CWD)
     files_txt = Path("files.txt")
     if not files_txt.exists():
         _ = files_txt.touch()
         print(f"Created {files_txt}")
-
-    # 2. Ensure models/ directory exists
-    if output_dir is not None:
-        models_dir = resolve_models_dir(output_dir)
-    else:
-        models_dir = root / "models"
-        if not models_dir.is_dir():
-            models_dir.mkdir(parents=True, exist_ok=True)
-            print(f"Created {models_dir}/")
-
-    # 3. Ensure prompt.txt exists in models/
-    prompt_file = models_dir / "prompt.txt"
-    if not prompt_file.exists():
-        _ = prompt_file.touch()
-        print(f"Created {prompt_file}")
-
-    # 4. Ensure model template files exist if models/ is empty
-    _ensure_model_files(models_dir, model_count)
 
 
 def _ensure_model_files(models_dir: Path, model_count: int) -> None:
@@ -454,12 +422,21 @@ def _read_pattern_file(path: Path) -> set[str]:
     return patterns
 
 
+@functools.lru_cache(maxsize=16384)
+def _check_glob_match(path_str: str, patterns: frozenset[str]) -> bool:
+    """Cached glob matching to reduce O(N*P) regex recompilation overhead."""
+    return any(fnmatch.fnmatch(path_str, pat) for pat in patterns)
+
+
 def should_ignore(path: Path, root: Path, patterns: frozenset[str]) -> bool:
     """Decide whether *path* matches any exclusion pattern.
 
     Matching is performed against:
     * The full POSIX relative path (e.g. ``src/utils/helper.py``).
     * Each individual path component (e.g. ``src``, ``utils``, ``helper.py``).
+
+    Uses :func:`_check_glob_match` with LRU caching to avoid redundant
+    regex compilations across repeated calls with the same pattern set.
 
     Args:
         path: Path to evaluate.
@@ -476,11 +453,14 @@ def should_ignore(path: Path, root: Path, patterns: frozenset[str]) -> bool:
 
     rel_posix = rel.as_posix()
 
-    return any(
-        fnmatch.fnmatch(rel_posix, pat)
-        or any(fnmatch.fnmatch(part, pat) for part in rel.parts)
-        for pat in patterns
-    )
+    if _check_glob_match(rel_posix, patterns):
+        return True
+
+    for part in rel.parts:
+        if _check_glob_match(part, patterns):
+            return True
+
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -593,6 +573,16 @@ def resolve_cross_platform_path(path_str: str) -> Path:
         resolved_path = cwd
         for part in remaining_parts:
             resolved_path = resolved_path / part
+
+        if not resolved_path.exists():
+            print(
+                f"WARNING: Cross-platform path resolution failed for"
+                f" {stripped}. Resolved to {resolved_path} which does not"
+                f" exist. Falling back to normalized path.",
+                file=sys.stderr,
+            )
+            return Path(normalized)
+
         return resolved_path
 
     # As a final fallback, return Path(normalized)
@@ -628,7 +618,15 @@ def parse_file_entry(
         for segment in range_part.split(","):
             m = re.match(r"(\d+)\s*-\s*(\d+)", segment.strip())
             if m:
-                ranges.append((int(m.group(1)), int(m.group(2))))
+                start, end = int(m.group(1)), int(m.group(2))
+                if start > end:
+                    print(
+                        f"WARNING: Reversed line range {start}-{end} for"
+                        f" {path_part.rstrip()}, auto-corrected to {end}-{start}",
+                        file=sys.stderr,
+                    )
+                    start, end = end, start
+                ranges.append((start, end))
         if ranges:
             return (
                 resolve_cross_platform_path(path_part.rstrip()),
@@ -663,52 +661,91 @@ def read_file_entries(
         raise FileNotFoundError(f"Source paths file not found: {source_file}")
 
     entries: list[tuple[Path, list[tuple[int, int]] | None, bool]] = []
-    with source_file.open("r", encoding="utf-8") as fh:
-        for line in fh:
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            path, ranges, is_important = parse_file_entry(stripped)
-            # Validate that the path resolves to an existing file (Req 3)
-            if not path.is_file():
-                print(
-                    f"Warning: Invalid path skipped: {stripped}",
-                    file=sys.stderr,
-                )
-                continue
-            entries.append((path, ranges, is_important))
+    
+    # Try reading with utf-8-sig (handles BOM), fall back to utf-16 if needed
+    try:
+        with source_file.open("r", encoding="utf-8-sig") as fh:
+            lines = fh.readlines()
+    except UnicodeDecodeError:
+        with source_file.open("r", encoding="utf-16") as fh:
+            lines = fh.readlines()
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        path, ranges, is_important = parse_file_entry(stripped)
+        # Validate that the path resolves to an existing file (Req 3)
+        if not path.is_file():
+            print(
+                f"Warning: Invalid path skipped: {stripped}",
+                file=sys.stderr,
+            )
+            continue
+        entries.append((path, ranges, is_important))
 
     return entries
 
 
-def extract_lines(
-    content: str, ranges: list[tuple[int, int]]
-) -> str:
-    """Extract specified line ranges from content.
+def stream_file_content(
+    path: Path, ranges: list[tuple[int, int]] | None
+) -> Iterator[str]:
+    """Yield lines from a file, efficiently stopping early if ranges allow."""
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            if ranges is None:
+                yield from fh
+                return
 
-    Args:
-        content: Full file text.
-        ranges: List of (start, end) tuples, 1-indexed, inclusive.
+            sorted_ranges = sorted(ranges, key=lambda r: r[0])
 
-    Returns:
-        The selected lines, with '...\\n' separator between non-contiguous ranges.
-    """
-    lines = content.splitlines(keepends=True)
-    result: list[str] = []
-    last_end = 0
+            current_line = 1
+            last_end = 0
+            hit_eof = False
 
-    for start, end in ranges:
-        s = max(0, start - 1)
-        e = min(len(lines), end)
+            for start, end in sorted_ranges:
+                if hit_eof:
+                    break
 
-        # Add separator if there's a gap from previous range
-        if result and s > last_end:
-            result.append("...\n")
+                # Handle gap between non-contiguous ranges
+                if last_end > 0 and start > last_end + 1:
+                    yield "...\n"
 
-        result.extend(lines[s:e])
-        last_end = e
+                # Fast forward to start line
+                while current_line < start:
+                    line = fh.readline()
+                    if not line:
+                        hit_eof = True
+                        break
+                    current_line += 1
 
-    return "".join(result)
+                if hit_eof:
+                    break
+
+                # Yield lines within the current range
+                while current_line <= end:
+                    line = fh.readline()
+                    if not line:
+                        hit_eof = True
+                        break
+                    yield line
+                    current_line += 1
+
+                # Warn if requested range exceeded file length
+                if end >= current_line and hit_eof:
+                    yield (
+                        f"\n[WARNING: Reached EOF before fulfilling range"
+                        f" {start}-{end} in {path.name}]\n"
+                    )
+
+                last_end = end
+
+    except OSError as exc:
+        print(f"ERROR reading {path}: {exc}", file=sys.stderr)
+        yield f"\n[ERROR: Could not read file {path}]\n"
+    except UnicodeDecodeError as exc:
+        print(f"ERROR decoding {path}: {exc}", file=sys.stderr)
+        yield f"\n[ERROR: Could not decode file {path} as UTF-8]\n"
 
 
 def read_file_paths(source_file: Path) -> list[Path]:
@@ -746,8 +783,7 @@ def aggregate_files(
     """Write each file's contents (or snippets) to *output_file* with headers.
 
     Supports full files, line-range snippets, and "important" markers.
-    File content is read *before* any header is written, ensuring that a
-    read failure never leaves an orphaned header in the output.
+    File content is streamed to the output, ensuring minimal memory usage.
 
     Args:
         entries: Ordered list of (Path, line_ranges, is_important) tuples.
@@ -759,64 +795,36 @@ def aggregate_files(
     # Ensure parent directory exists (Req 1 — output may be in a subfolder)
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
+    print(
+        f"Overwriting {output_file.name}. Note: The Judge evaluates"
+        f" files in the models/ directory, not {output_file.name}.",
+        file=sys.stderr,
+    )
+
     with output_file.open("w", encoding="utf-8") as out:
         for path, line_ranges, is_important in entries:
-            try:
-                if not path.is_file():
-                    print(f"ERROR: Not a file: {path}", file=sys.stderr)
-                    continue
+            if not path.is_file():
+                print(f"ERROR: Not a file: {path}", file=sys.stderr)
+                continue
 
-                # Read content first — header is only written on success.
-                full_content = path.read_text(encoding="utf-8")
-                display = get_display_path(path, root)
+            display = get_display_path(path, root)
 
-                # Determine header type and content to write
-                if line_ranges is None:
-                    # Full file
-                    content = full_content
-                    header = f"# --- FILE: {display} ---"
-                elif is_important:
-                    # Important structure snippet
-                    content = extract_lines(full_content, line_ranges)
-                    range_str = ",".join(
-                        f"{s}-{e}" for s, e in line_ranges
-                    )
-                    header = (
-                        f"# --- IMPORTANT STRUCTURE: "
-                        f"{display} [{range_str}] ---"
-                    )
-                else:
-                    # Regular code snippet
-                    content = extract_lines(full_content, line_ranges)
-                    range_str = ",".join(
-                        f"{s}-{e}" for s, e in line_ranges
-                    )
-                    header = (
-                        f"# --- SNIPPET: "
-                        f"{display} [{range_str}] ---"
-                    )
+            if line_ranges is None:
+                header = f"# --- FILE: {display} ---"
+            elif is_important:
+                range_str = ",".join(f"{s}-{e}" for s, e in line_ranges)
+                header = f"# --- IMPORTANT STRUCTURE: {display} [{range_str}] ---"
+            else:
+                range_str = ",".join(f"{s}-{e}" for s, e in line_ranges)
+                header = f"# --- SNIPPET: {display} [{range_str}] ---"
 
-                _ = out.write(header + "\n")
-                _ = out.write(content)
-                if not content.endswith("\n"):
-                    _ = out.write("\n")
-                _ = out.write("\n")
-
-            except PermissionError as exc:
-                print(
-                    f"ERROR: Permission denied — {path}: {exc}",
-                    file=sys.stderr,
-                )
-            except UnicodeDecodeError as exc:
-                print(
-                    f"ERROR: Encoding error — {path}: {exc}",
-                    file=sys.stderr,
-                )
-            except OSError as exc:
-                print(
-                    f"ERROR: OS error — {path}: {exc}",
-                    file=sys.stderr,
-                )
+            out.write(header + "\n")
+            
+            for line in stream_file_content(path, line_ranges):
+                out.write(line)
+            
+            # Ensure separation between files
+            out.write("\n")
 
 
 # ---------------------------------------------------------------------------
@@ -824,40 +832,77 @@ def aggregate_files(
 # ---------------------------------------------------------------------------
 
 
-def discover_files_txt(cwd: Path) -> list[tuple[Path, str]]:
-    """Discover all ``files*.txt`` inputs in *cwd*.
-
-    Matches ``files.txt`` and ``files_*.txt`` (e.g. ``files_1.txt``,
-    ``files_02.txt``).  Each discovered input file produces its own set
-    of arena/structure/compare outputs with a matching suffix.
-
-    Args:
-        cwd: Directory to scan for input files.
-
-    Returns:
-        List of ``(file_path, suffix)`` tuples, sorted.
-        ``files.txt`` → suffix ``""``, ``files_1.txt`` → suffix ``"_1"``.
+def discover_files_txt(
+    cwd: Path, root: Path | None = None, settings: dict[str, object] | None = None
+) -> list[tuple[Path, str]]:
+    """Discover input files and return (file_path, arena_name) tuples.
+    
+    Primary: root/.context/inputs/*.txt
+    Fallback: cwd/files.txt and cwd/files_*.txt
     """
     results: list[tuple[Path, str]] = []
+    
+    if root and settings:
+        inputs_dir_str = cast(str, settings.get("inputs_dir", ".context/inputs"))
+        inputs_dir = root / inputs_dir_str
+        
+        if inputs_dir.is_dir():
+            for p in sorted(inputs_dir.glob("*.txt")):
+                if p.is_file():
+                    arena_name = p.stem
+                    results.append((p, arena_name))
+            if results:
+                return results
 
-    # Check for main files.txt
+    # Fallback to CWD
     main = cwd / "files.txt"
     if main.is_file():
-        results.append((main, ""))
-
-    # Check for files_*.txt
+        results.append((main, "files"))
+        
     for p in sorted(cwd.glob("files_*.txt")):
         if p.is_file():
-            # Extract suffix: "files_1.txt" → "_1", "files_02.txt" → "_02"
-            suffix = p.name[len("files") : -len(".txt")]
-            results.append((p, suffix))
-
+            suffix = p.name[len("files_") : -len(".txt")]
+            results.append((p, f"files_{suffix}"))
+            
     return results
 
 
 # ---------------------------------------------------------------------------
 # Output directory resolution (Req 1)
 # ---------------------------------------------------------------------------
+
+
+def resolve_arena_dir(output_dir: Path, arena_name: str) -> Path:
+    """Resolve the NNN-<arena-name> directory inside context_output/arenas/.
+    
+    Reuses the highest sequence number for the same arena_name.
+    """
+    arenas_base = output_dir / "arenas"
+    arenas_base.mkdir(parents=True, exist_ok=True)
+    
+    max_all = 0
+    existing_match = None
+    max_match = 0
+    
+    for d in arenas_base.iterdir():
+        if d.is_dir() and "-" in d.name:
+            parts = d.name.split("-", 1)
+            if parts[0].isdigit():
+                num = int(parts[0])
+                if num > max_all:
+                    max_all = num
+                if parts[1] == arena_name:
+                    if num > max_match:
+                        max_match = num
+                        existing_match = d
+
+    if existing_match is not None:
+        return existing_match
+        
+    next_num = max_all + 1
+    next_dir = arenas_base / f"{next_num:03d}-{arena_name}"
+    next_dir.mkdir(parents=True, exist_ok=True)
+    return next_dir
 
 
 def resolve_output_dir(

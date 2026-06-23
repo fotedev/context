@@ -5,6 +5,6 @@
   "gemini_judge": false,
   "compact_mode": false,
   "archive": true,
-  "archive_dir": "models/old",
-  "archive_scheme": "numbered"
+  "archive_dir": "ARCHIVE",
+  "inputs_dir": ".context/inputs"
 }

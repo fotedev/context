@@ -19,23 +19,24 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import asyncio
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font, messagebox, scrolledtext, ttk
-from typing import Optional, Any
+from typing import Optional, Any, cast
 
 # ── Encoding fix for Windows terminals ───────────────────────────────────────
 if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore
+    getattr(sys.stdout, "reconfigure")(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8")  # type: ignore
+    getattr(sys.stderr, "reconfigure")(encoding="utf-8")
 
 # ── Project directory on sys.path so core/ is importable ─────────────────────
 _PROJECT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_PROJECT_DIR))
 
 # ── Core imports ──────────────────────────────────────────────────────────────
-from core.parser import (
+from core.parser import (  # pyright: ignore[reportAttributeAccessIssue, reportMissingImports]
     aggregate_files,
     find_project_root,
     generate_tree,
@@ -49,29 +50,23 @@ from core.parser import (
     resolve_output_dir,
     resolve_models_dir,
     discover_files_txt,
+    resolve_arena_dir,
     migrate_old_outputs,
     display_settings,
 )
-from core.counter import count_tokens
-from core.judge import (
+from core.counter import count_tokens  # pyright: ignore[reportAttributeAccessIssue, reportMissingImports]
+from core.judge import (  # pyright: ignore[reportAttributeAccessIssue, reportMissingImports]
     build_compare_markdown,
     collect_model_responses,
     generate_compare_template,
-    get_gemini_verdict,
     load_dotenv,
     archive_model_responses,
     ensure_model_templates,
+    GeminiJudge,
 )
 
 # ── Fixed output paths (always relative to the aggregator project dir) ────────
 _FILES_TXT    = _PROJECT_DIR / "files.txt"
-
-def _output_names(suffix: str, output_format: str) -> tuple[str, str, str]:
-    """Build the (arena, structure, compare) filenames for a given suffix."""
-    arena = f"arena{suffix}.txt"
-    structure = f"structure{suffix}.txt"
-    compare = f"compare{suffix}.{output_format}"
-    return arena, structure, compare
 
 # ── Catppuccin Mocha dark palette ─────────────────────────────────────────────
 _BG         = "#1e1e2e"   # base
@@ -250,6 +245,7 @@ class AggregatorGUI(tk.Tk):
         self._cmd_output: str | None = cmd_output
         self._project_root: Path = cmd_root if cmd_root else self._detect_initial_root()
         self._busy: bool = False          # True while a background thread runs
+        self._cancel_requested: bool = False  # True when user requests cancellation
         self._settings: dict[str, object] = {}
         self._suppress_settings_save: bool = False
 
@@ -262,25 +258,25 @@ class AggregatorGUI(tk.Tk):
         self._output_format_var: tk.StringVar = tk.StringVar(value="md")
 
         # UI Font variables
-        self._font_ui: font.Font = None  # type: ignore
-        self._font_mono: font.Font = None  # type: ignore
-        self._font_title: font.Font = None  # type: ignore
-        self._font_small: font.Font = None  # type: ignore
+        self._font_ui: font.Font = cast(font.Font, None)
+        self._font_mono: font.Font = cast(font.Font, None)
+        self._font_title: font.Font = cast(font.Font, None)
+        self._font_small: font.Font = cast(font.Font, None)
 
         # UI Components variables
-        self._tree_title: tk.Label = None  # type: ignore
-        self._search_var: tk.StringVar = None  # type: ignore
-        self._tree: ttk.Treeview = None  # type: ignore
-        self._queue_title: tk.Label = None  # type: ignore
-        self._queue_listbox: tk.Listbox = None  # type: ignore
+        self._tree_title: tk.Label = cast(tk.Label, None)
+        self._search_var: tk.StringVar = cast(tk.StringVar, None)
+        self._tree: ttk.Treeview = cast(ttk.Treeview, None)
+        self._queue_title: tk.Label = cast(tk.Label, None)
+        self._queue_listbox: tk.Listbox = cast(tk.Listbox, None)
         self._queue_colours: dict[int, str] = {}
-        self._api_key_label: tk.Label = None  # type: ignore
-        self._log: scrolledtext.ScrolledText = None  # type: ignore
-        self._project_path_var: tk.StringVar = None  # type: ignore
-        self._project_path_entry: tk.Entry = None  # type: ignore
-        self._progress: ttk.Progressbar = None  # type: ignore
-        self._status_var: tk.StringVar = None  # type: ignore
-        self._status_lbl: tk.Label = None  # type: ignore
+        self._api_key_label: tk.Label = cast(tk.Label, None)
+        self._log: scrolledtext.ScrolledText = cast(scrolledtext.ScrolledText, None)
+        self._project_path_var: tk.StringVar = cast(tk.StringVar, None)
+        self._project_path_entry: tk.Entry = cast(tk.Entry, None)
+        self._progress: ttk.Progressbar = cast(ttk.Progressbar, None)
+        self._status_var: tk.StringVar = cast(tk.StringVar, None)
+        self._status_lbl: tk.Label = cast(tk.Label, None)
 
         # Load initial settings
         self._load_and_apply_settings()
@@ -785,6 +781,14 @@ class AggregatorGUI(tk.Tk):
                 padx=14,
             ).pack(side="right", padx=5, pady=8)
 
+        # Cancel button (hidden until busy)
+        self._cancel_btn = tk.Button(
+            bar, text="⏹  Cancel", command=self._cancel_run,
+            bg=_RED, fg=_BTN_TEXT,
+            relief="flat", font=self._font_ui, cursor="hand2",
+            padx=14,
+        )
+
         # Progress bar (hidden until busy)
         self._progress = ttk.Progressbar(
             bar, mode="indeterminate", length=120,
@@ -1078,9 +1082,18 @@ class AggregatorGUI(tk.Tk):
             self._log_write("Already running — please wait.", tag="warn")
             return
         self._busy = True
+        self._cancel_requested = False
         self._progress.pack(side="right", padx=6, pady=10)
         self._progress.start(12)
+        self._cancel_btn.pack(side="right", padx=5, pady=8)
         threading.Thread(target=self._aggregate_worker, daemon=True).start()
+
+    def _cancel_run(self) -> None:
+        """Request cancellation of the current aggregation run."""
+        if self._busy:
+            self._cancel_requested = True
+            self._log_write("Cancellation requested — finishing current step …", tag="warn")
+            self._set_status("Cancelling …")
 
     def _aggregate_worker(self) -> None:
         """Full aggregation pipeline executed on a background thread.
@@ -1106,7 +1119,6 @@ class AggregatorGUI(tk.Tk):
             settings = load_settings(root)
 
             output_dir = resolve_output_dir(root, settings)
-            models_dir = resolve_models_dir(output_dir)
             output_format = str(settings.get("output_format", "md"))
             gemini_judge = bool(settings.get("gemini_judge", False))
             compact_mode = bool(settings.get("compact_mode", False))
@@ -1121,25 +1133,12 @@ class AggregatorGUI(tk.Tk):
             self._step("Initializing environment …")
             initialize_environment(root, model_count, output_dir)
 
-            # --- Ensure model templates for chosen count ----------------------
-            ensure_model_templates(root, model_count, models_dir)
-
-            # --- Archiving workflow -------------------------------------------
-            if archive:
-                self._step("Archiving model responses …")
-                archive_dir = str(settings.get("archive_dir", "models/ARCHIVE"))
-                archived = archive_model_responses(
-                    root, archive_dir, models_dir,
-                )
-                if archived:
-                    ensure_model_templates(root, model_count, models_dir)
-                    self._log_write(f"Archived {len(archived)} response(s) to {archive_dir}.", tag="ok")
 
             # --- Discover files*.txt ------------------------------------------
-            self._step("Discovering files*.txt in project root …")
-            discovered = discover_files_txt(root)
+            self._step("Discovering inputs in .context/inputs/ or root …")
+            discovered = discover_files_txt(root, root, settings)
             if not discovered:
-                self._log_write("No files*.txt found in project root — nothing to do.", tag="warn")
+                self._log_write("No input files found — nothing to do.", tag="warn")
                 self._set_status("No inputs found.")
                 return
 
@@ -1147,13 +1146,18 @@ class AggregatorGUI(tk.Tk):
             processed_count = 0
             total_tokens = 0
 
-            for files_input, suffix in discovered:
+            for files_input, arena_name in discovered:
+                if self._cancel_requested:
+                    self._log_write("Aggregation cancelled by user.", tag="warn")
+                    self._set_status("Cancelled.")
+                    break
+
                 self._step(f"Processing {files_input.name} …")
 
-                arena_name, structure_name, compare_name = _output_names(suffix, output_format)
-                arena_path = output_dir / arena_name
-                structure_path = output_dir / structure_name
-                compare_path = output_dir / compare_name
+                arena_dir = resolve_arena_dir(output_dir, arena_name)
+                arena_path = arena_dir / "arena.txt"
+                structure_path = arena_dir / "structure.txt"
+                compare_path = arena_dir / f"compare.{output_format}"
 
                 # Writable checks (fail fast)
                 for out_path in (arena_path, structure_path, compare_path):
@@ -1184,11 +1188,11 @@ class AggregatorGUI(tk.Tk):
                     root, root, patterns
                 )
                 structure_path.write_text("\n".join(tree_lines), encoding="utf-8")
-                self._log_write(f"[{files_input.name}] structure written → {structure_name}", tag="ok")
+                self._log_write(f"[{files_input.name}] structure written → {structure_path.name}", tag="ok")
 
                 # ── Step 3: Aggregate ─────────────────────────────────────────
                 aggregate_files(entries, arena_path, root)
-                self._log_write(f"[{files_input.name}] arena written → {arena_name}", tag="ok")
+                self._log_write(f"[{files_input.name}] arena written → {arena_path.name}", tag="ok")
 
                 # ── Step 4: Token count ───────────────────────────────────────
                 try:
@@ -1214,7 +1218,15 @@ class AggregatorGUI(tk.Tk):
                     self._log_write(f"[{files_input.name}] Token count warning: {exc}", tag="warn")
 
                 # ── Step 5: Collect model responses ──────────────────────────
-                prompt, models_data = collect_model_responses(root, output_format, models_dir)
+                answers_dir = arena_dir / "answers"
+                answers_dir.mkdir(parents=True, exist_ok=True)
+                prompt_file = answers_dir / "prompt.txt"
+                if not prompt_file.exists():
+                    _ = prompt_file.touch()
+                    self._log_write(f"[{files_input.name}] Created {prompt_file.name}", tag="ok")
+                ensure_model_templates(root, model_count, answers_dir)
+
+                prompt, models_data = collect_model_responses(root, output_format, answers_dir)
 
                 if not models_data:
                     generate_compare_template(compare_path, model_count)
@@ -1226,18 +1238,21 @@ class AggregatorGUI(tk.Tk):
                     continue
 
                 self._log_write(
-                    f"[{files_input.name}] Found {len(models_data)} model response(s) in models/", tag="ok"
+                    f"[{files_input.name}] Found {len(models_data)} model response(s) in answers/", tag="ok"
                 )
 
                 # ── Step 6: Gemini AI Judge (optional) ────────────────────────
                 verdict: Optional[str] = None
                 if gemini_judge:
-                    self._step(f"[{files_input.name}] Running Gemini AI Judge …")
+                    if self._cancel_requested:
+                        break
+                    self._step(f"[{files_input.name}] Running Gemini AI Judge (may take up to 45s) …")
                     api_key = self._resolve_api_key_for_thread(root)
 
                     if api_key:
                         try:
-                            verdict = get_gemini_verdict(prompt, models_data, api_key)
+                            judge = GeminiJudge()
+                            verdict = asyncio.run(judge.evaluate(prompt, models_data, api_key))
                             self._log_write(f"[{files_input.name}] Gemini verdict received ✓", tag="judge")
                         except Exception as exc:
                             self._log_write(
@@ -1255,9 +1270,21 @@ class AggregatorGUI(tk.Tk):
                 mode_str  = " [COMPACT]" if compact_mode else ""
                 judge_str = " + Gemini Judge" if verdict else ""
                 self._log_write(
-                    f"[{files_input.name}] compare written → {compare_name}  ({len(models_data)} models){mode_str}{judge_str}",
+                    f"[{files_input.name}] compare written → {compare_path.name}  ({len(models_data)} models){mode_str}{judge_str}",
                     tag="ok",
                 )
+
+                # --- Archiving workflow (local to this arena) ---------------------
+                if archive:
+                    self._step(f"[{files_input.name}] Archiving model responses …")
+                    archive_dir = str(settings.get("archive_dir", "ARCHIVE"))
+                    archived = archive_model_responses(
+                        root, archive_dir, answers_dir,
+                    )
+                    if archived:
+                        ensure_model_templates(root, model_count, answers_dir)
+                        self._log_write(f"[{files_input.name}] Archived {len(archived)} response(s) to {archive_dir}.", tag="ok")
+
                 processed_count += 1
 
             # ── Final status ──────────────────────────────────────────────────
@@ -1338,6 +1365,7 @@ class AggregatorGUI(tk.Tk):
     def _stop_progress(self) -> None:
         self._progress.stop()
         self._progress.pack_forget()
+        self._cancel_btn.pack_forget()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

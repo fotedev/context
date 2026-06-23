@@ -19,3 +19,5 @@ aggregator_tui.py.log
 /counter.py.log
 /judge.py.log
 /parser.py.log
+/.context/inputs
+__init__.py.log

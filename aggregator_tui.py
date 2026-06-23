@@ -40,11 +40,9 @@ from aggregator import (  # noqa: E402
 )
 from core.parser import read_file_entries, read_file_paths, should_ignore
 from core.counter import count_tokens
-from core.judge import collect_model_responses, get_gemini_verdict, build_compare_markdown
+from core.judge import collect_model_responses, build_compare_markdown
 
 _FILES_TXT = _PROJECT_DIR / "files.txt"
-_ARENA_TXT = _PROJECT_DIR / "arena.txt"
-_STRUCTURE_TXT = _PROJECT_DIR / "structure.txt"
 _ENV_FILE = _PROJECT_DIR / ".env"
 
 _CSS = """
@@ -197,6 +195,8 @@ class APIKeyModal(ModalScreen[str | type(None)]):
 class TreeEntry(Checkbox):
     """Selectable file entry in the project tree."""
 
+    file_path: Path
+
     def __init__(self, label: str, file_path: Path, value: bool = False) -> None:
         super().__init__(label, value=value)
         self.file_path = file_path
@@ -205,10 +205,10 @@ class TreeEntry(Checkbox):
 class AggregatorTUI(App[None]):
     """Interactive TUI for browsing, selecting, and aggregating project files."""
 
-    TITLE = "File Aggregator"
-    CSS = _CSS
+    TITLE: str = "File Aggregator"
+    CSS: str = _CSS
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS = [
         Binding("r", "refresh", "Refresh Tree", show=True),
         Binding("a", "aggregate", "Aggregate", show=True),
         Binding("c", "clear", "Clear Queue", show=True),
@@ -437,8 +437,8 @@ class AggregatorTUI(App[None]):
                 content = path.read_text(encoding="utf-8")
                 
                 if line_ranges is not None:
-                    from core.parser import extract_lines
-                    content = extract_lines(content, line_ranges)
+                    from core.parser import stream_file_content
+                    content = "".join(stream_file_content(path, line_ranges))
                     
                 total_chars += len(content)
             except Exception:
@@ -499,29 +499,49 @@ class AggregatorTUI(App[None]):
                 return
 
             root = find_project_root(paths[0])
-            patterns = load_ignore_patterns(root or self._detect_root())
+            resolved_root = root or self._detect_root() or _PROJECT_DIR
+            patterns = load_ignore_patterns(resolved_root)
+
+            # Resolve arena directory
+            from core.parser import load_settings, resolve_output_dir, resolve_arena_dir
+            settings = load_settings(resolved_root)
+            output_dir = resolve_output_dir(resolved_root, settings)
+            arena_dir = resolve_arena_dir(output_dir, _FILES_TXT.stem)
+            
+            arena_txt = arena_dir / "arena.txt"
+            structure_txt = arena_dir / "structure.txt"
 
             if root:
                 tree_lines = [f"Project Root: {root.name}/"] + generate_tree(
                     root, root, patterns
                 )
-                _STRUCTURE_TXT.write_text("\n".join(tree_lines), encoding="utf-8")
-                self.log_message("[ok] structure.txt written", "success")
+                structure_txt.write_text("\n".join(tree_lines), encoding="utf-8")
+                self.log_message(f"[ok] structure written to {structure_txt.name}", "success")
 
             entries = read_file_entries(_FILES_TXT)
-            aggregate_files(entries, _ARENA_TXT, root)
-            self.log_message(f"[ok] arena.txt written ({len(paths)} file(s)).", "success")
+            aggregate_files(entries, arena_txt, root)
+            self.log_message(f"[ok] arena written ({len(paths)} file(s)) to {arena_txt.name}.", "success")
+
+            # Resolve and initialize local answers directory
+            answers_dir = arena_dir / "answers"
+            answers_dir.mkdir(parents=True, exist_ok=True)
+            prompt_file = answers_dir / "prompt.txt"
+            if not prompt_file.exists():
+                prompt_file.touch()
+            model_count = settings.get("model_count", 2)
+            from core.judge import ensure_model_templates
+            _ = ensure_model_templates(resolved_root, model_count, answers_dir)
             
             run_judge = self.query_one("#cb-judge", Checkbox).value
             if run_judge:
-                self._check_and_run_judge(root)
+                self._check_and_run_judge(root, arena_dir)
 
         except FileNotFoundError:
             self.log_message("[error] files.txt not found — add files first.", "error")
         except Exception as exc:
             self.log_message(f"[error] {exc}", "error")
 
-    def _check_and_run_judge(self, root: Path | None) -> None:
+    def _check_and_run_judge(self, root: Path | None, arena_dir: Path) -> None:
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             # Check env file in aggregator dir
@@ -533,11 +553,11 @@ class AggregatorTUI(App[None]):
             api_key = os.environ.get("GEMINI_API_KEY")
             
         if not api_key:
-            self.call_from_thread(self._prompt_for_key_and_run, root)
+            self.call_from_thread(self._prompt_for_key_and_run, root, arena_dir)
         else:
-            self._run_judge_thread(root, api_key)
+            self._run_judge_thread(root, api_key, arena_dir)
 
-    def _prompt_for_key_and_run(self, root: Path | None) -> None:
+    def _prompt_for_key_and_run(self, root: Path | None, arena_dir: Path) -> None:
         def check_key(key: str | None) -> None:
             if key:
                 os.environ["GEMINI_API_KEY"] = key
@@ -548,28 +568,55 @@ class AggregatorTUI(App[None]):
                 except Exception as e:
                     self.log_message(f"[error] Failed to save key: {e}", "warning")
                     
-                self._run_judge_thread(root, key)
+                self._run_judge_thread(root, key, arena_dir)
             else:
                 self.log_message("[judge] API key is required to run the AI Judge.", "warning")
                 
         self.app.push_screen(APIKeyModal(), check_key)
 
-    @work(thread=True)
-    def _run_judge_thread(self, root: Path | None, api_key: str) -> None:
+    @work(exclusive=True)
+    async def _run_judge_thread(self, root: Path | None, api_key: str, arena_dir: Path) -> None:
         self.log_message("[judge] Collecting model responses...", "action")
         try:
-            prompt, models_data = collect_model_responses(root)
+            from core.parser import load_settings
+            resolved_root = root or self._detect_root() or _PROJECT_DIR
+            settings = load_settings(resolved_root)
+            output_format = settings.get("output_format", "md")
+            answers_dir = arena_dir / "answers"
+
+            prompt, models_data = collect_model_responses(resolved_root, output_format, answers_dir)
             if not models_data:
-                self.log_message("[judge] No model responses found in models/ directory.", "warning")
+                self.log_message("[judge] No model responses found in answers/ directory.", "warning")
+                compare_file = arena_dir / f"compare.{output_format}"
+                from core.judge import generate_compare_template
+                model_count = settings.get("model_count", 2)
+                generate_compare_template(compare_file, model_count)
+                self.log_message(f"[ok] Blank template written to {compare_file.name}.", "success")
                 return
                 
             self.log_message(f"[judge] Found {len(models_data)} models. Requesting Gemini evaluation...", "action")
-            verdict = get_gemini_verdict(prompt, models_data, api_key)
+            from core.judge import GeminiJudge
+            judge = GeminiJudge()
+            verdict = await judge.evaluate(prompt, models_data, api_key)
             
             compact = self.query_one("#cb-compact", Checkbox).value
-            compare_file = (root or _PROJECT_DIR) / "compare.md"
+            compare_file = arena_dir / f"compare.{output_format}"
+            
             build_compare_markdown(prompt, models_data, compare_file, verdict=verdict, compact=compact)
             
+            # --- Req 5: archiving workflow (local to this arena) ---
+            archive = settings.get("archive", False)
+            if archive:
+                self.log_message("[judge] Archiving model responses …", "action")
+                archive_dir = str(settings.get("archive_dir", "ARCHIVE"))
+                from core.judge import archive_model_responses
+                archived = archive_model_responses(resolved_root, archive_dir, answers_dir)
+                if archived:
+                    model_count = settings.get("model_count", 2)
+                    from core.judge import ensure_model_templates
+                    ensure_model_templates(resolved_root, model_count, answers_dir)
+                    self.log_message(f"[ok] Archived responses to {archive_dir}.", "success")
+
             self.log_message(f"[ok] AI Judge evaluation written to {compare_file.name}.", "success")
         except Exception as exc:
             self.log_message(f"[error] AI Judge failed: {exc}", "error")

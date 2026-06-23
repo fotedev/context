@@ -14,6 +14,7 @@ Runs completely silently (non-interactive) by default.
 """
 
 import sys
+import asyncio
 from pathlib import Path
 from typing import cast
 
@@ -37,6 +38,7 @@ from core.parser import (
     resolve_output_dir,
     resolve_models_dir,
     discover_files_txt,
+    resolve_arena_dir,
     load_settings,
     save_settings,
     display_settings,
@@ -48,9 +50,9 @@ from core.judge import (
     build_compare_markdown,
     generate_compare_template,
     get_api_key,
-    get_gemini_verdict,
     archive_model_responses,
     ensure_model_templates,
+    GeminiJudge,
 )
 
 # ---------------------------------------------------------------------------
@@ -196,20 +198,20 @@ def _output_names(suffix: str, output_format: str) -> tuple[str, str, str]:
 
 def _process_one(
     files_txt: Path,
-    suffix: str,
+    arena_name: str,
     root: Path | None,
     output_dir: Path,
     patterns: frozenset[str],
     output_format: str,
     gemini_judge: bool,
     compact_mode: bool,
-    models_dir: Path,
+    model_count: int,
 ) -> None:
     """Process a single files*.txt input → arena/structure/compare outputs.
 
     Args:
         files_txt: Path to the input files listing.
-        suffix: Output suffix derived from the input filename.
+        arena_name: Output arena name derived from the input filename.
         root: Detected project root (or None).
         output_dir: Resolved output directory.
         patterns: Compiled ignore patterns.
@@ -218,10 +220,18 @@ def _process_one(
         compact_mode: Whether to use compact compare output.
         models_dir: Canonical models directory.
     """
-    arena_name, structure_name, compare_name = _output_names(suffix, output_format)
-    arena_path = output_dir / arena_name
-    structure_path = output_dir / structure_name
-    compare_path = output_dir / compare_name
+    arena_dir = resolve_arena_dir(output_dir, arena_name)
+    arena_path = arena_dir / "arena.txt"
+    structure_path = arena_dir / "structure.txt"
+    compare_path = arena_dir / f"compare.{output_format}"
+
+    answers_dir = arena_dir / "answers"
+    answers_dir.mkdir(parents=True, exist_ok=True)
+    prompt_file = answers_dir / "prompt.txt"
+    if not prompt_file.exists():
+        _ = prompt_file.touch()
+        print(f"[{files_txt.name}] Created {prompt_file}")
+    ensure_model_templates(root or Path.cwd(), model_count, answers_dir)
 
     # Read entries. Missing file → empty list (EC1: still emit empty outputs).
     try:
@@ -294,14 +304,15 @@ def _process_one(
         print(f"[{files_txt.name}] Warning: Could not count tokens: {exc}")
 
     # 4. Compare output from models/ dir (or llm.txt fallback) or template
-    prompt, models_data = collect_model_responses(root, output_format, models_dir)
+    prompt, models_data = collect_model_responses(root, output_format, answers_dir)
     if models_data:
         verdict: str | None = None
         if gemini_judge:
             api_key = get_api_key(root)
             if api_key:
                 try:
-                    verdict = get_gemini_verdict(prompt, models_data, api_key)
+                    judge = GeminiJudge()
+                    verdict = asyncio.run(judge.evaluate(prompt, models_data, api_key))
                     print(
                         f"[{files_txt.name}] Gemini comparison evaluation generated successfully."
                     )
@@ -456,23 +467,19 @@ def main() -> None:
 
     # Resolve runtime values.
     output_dir = resolve_output_dir(init_root, settings, cli_output)
-    models_dir = resolve_models_dir(output_dir)
     output_format = str(settings.get("output_format", "md"))
     gemini_judge = bool(settings.get("gemini_judge", False))
     compact_mode = bool(settings.get("compact_mode", False))
     archive = bool(settings.get("archive", False))
     raw_model_count = settings.get("model_count", 2)
     model_count = int(raw_model_count) if isinstance(raw_model_count, (int, str)) else 2
-    archive_dir = str(settings.get("archive_dir", "models/ARCHIVE"))
+    archive_dir = str(settings.get("archive_dir", "ARCHIVE"))
 
     # --- Migrate legacy CWD outputs + root models/ into output_dir/ ------
     _ = migrate_old_outputs(init_root, output_dir)
 
-    # --- Initialize environment (files.txt, models/, prompt.txt) ---------
+    # --- Initialize environment (files.txt) ---------
     initialize_environment(init_root, model_count, output_dir)
-
-    # --- EC3 / Req 7: ensure model templates for chosen count ------------
-    _ = ensure_model_templates(init_root, model_count, models_dir)
 
     # --- EC5: old files in output folder ---------------------------------
     any_old = (
@@ -486,15 +493,6 @@ def main() -> None:
             print("Skipping merge — existing output files will be overwritten.")
     # Non-interactive: default silently to overwriting (auto-merge).
 
-    # --- Req 5: archiving workflow ---------------------------------------
-    if archive:
-        archived = archive_model_responses(
-            init_root, archive_dir, models_dir,
-        )
-        if archived:
-            # Re-create fresh templates for the configured model count.
-            _ = ensure_model_templates(init_root, model_count, models_dir)
-            print(f"Archived {len(archived)} file(s) to {archive_dir}.")
 
     # --- Detect project root (used for tree + ignore patterns) -----------
     files_txt = Path("files.txt")
@@ -518,24 +516,35 @@ def main() -> None:
     patterns = load_ignore_patterns(root)
 
     # --- Req 2: discover and process ALL files*.txt ----------------------
-    discovered = discover_files_txt(cwd)
+    discovered = discover_files_txt(cwd, root, settings)
     if not discovered:
-        print("No files*.txt found in CWD — nothing to do.")
+        print("No files*.txt found in CWD or .context/inputs/ — nothing to do.")
         return
 
-    for files_input, suffix in discovered:
+    for files_input, arena_name in discovered:
         try:
             _process_one(
                 files_txt=files_input,
-                suffix=suffix,
+                arena_name=arena_name,
                 root=root,
                 output_dir=output_dir,
                 patterns=patterns,
                 output_format=output_format,
                 gemini_judge=gemini_judge,
                 compact_mode=compact_mode,
-                models_dir=models_dir,
+                model_count=model_count,
             )
+            # --- Req 5: archiving workflow (local to each arena) -----------------
+            if archive:
+                arena_dir = resolve_arena_dir(output_dir, arena_name)
+                answers_dir = arena_dir / "answers"
+                archived = archive_model_responses(
+                    root or Path.cwd(), archive_dir, answers_dir,
+                )
+                if archived:
+                    # Re-create fresh templates for the configured model count.
+                    _ = ensure_model_templates(root or Path.cwd(), model_count, answers_dir)
+                    print(f"[{files_input.name}] Archived {len(archived)} file(s) to {archive_dir}.")
         except Exception as exc:  # pylint: disable=broad-exception-caught  # noqa: BLE001 — last-resort guard per file
             print(
                 f"ERROR processing {files_input.name}: {exc}",

@@ -15,6 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import cast
 from http.client import HTTPException, HTTPResponse
+import abc
+import asyncio
 
 # ---------------------------------------------------------------------------
 # .env loading
@@ -92,99 +94,103 @@ def get_api_key(root_dir: Path | None = None) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def get_gemini_verdict(
-    prompt: str, models_data: list[dict[str, str]], api_key: str
-) -> str:
-    """Call Gemini Flash API to compare the model responses.
+class BaseJudge(abc.ABC):
+    """Abstract base class defining the contract for AI Judges."""
+    
+    @abc.abstractmethod
+    async def evaluate(
+        self, prompt: str, models_data: list[dict[str, str]], api_key: str
+    ) -> str:
+        """Asynchronously evaluate model responses and return a Markdown verdict."""
+        pass
 
-    Returns evaluation markdown with summary table, key analysis,
-    winner & ranking, optimal merged solution, and a prompt for the
-    coding agent.
-
-    Args:
-        prompt: The user prompt that was sent to all models.
-        models_data: List of dicts with ``name`` and ``response`` keys.
-        api_key: Gemini API key.
-
-    Returns:
-        Markdown evaluation text from Gemini.
-
-    Raises:
-        RuntimeError: If the API request fails.
-    """
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/"
-        f"models/gemini-2.5-flash:generateContent?key={api_key}"
-    )
-    eval_prompt = (
-        "You are an expert software engineer and AI model evaluator.\n"
-        "Your task is to analyze the following user prompt and compare "
-        "the responses from different AI models.\n"
-        "Determine the winner, rank the model responses from best to worst, "
-        "point out the strengths and weaknesses of each, and provide a clear, "
-        "technical reason for your verdict.\n\n"
-        f"[User Prompt]\n{prompt}\n\n"
-    )
-    for model in models_data:
-        eval_prompt += (
-            f"\n\n==================== RESPONSE FROM "
-            f"{model['name'].upper()} ====================\n"
+class GeminiJudge(BaseJudge):
+    """Gemini-based AI Judge implementation using non-blocking threaded I/O."""
+    
+    async def evaluate(
+        self, prompt: str, models_data: list[dict[str, str]], api_key: str
+    ) -> str:
+        eval_prompt = self._build_prompt(prompt, models_data)
+        
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/"
+            f"models/gemini-2.5-flash:generateContent?key={api_key}"
         )
-        eval_prompt += f"{model['response']}\n"
-        eval_prompt += (
-            f"==================== END OF RESPONSE FROM "
-            f"{model['name'].upper()} ====================\n"
+        data = {
+            "contents": [
+                {"parts": [{"text": eval_prompt}]}
+            ]
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(data).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
         )
-    eval_prompt += (
-        "\nPlease output your evaluation in Markdown format."
-        " Your evaluation must be thorough and include:\n"
-        "1. **Summary Table**: Compare the models across key dimensions"
-        " (e.g. correctness, completeness, formatting, explanation quality).\n"
-        "2. **Key Analysis**: A detailed review of the differences in the"
-        " code, approach, or explanations.\n"
-        "3. **Winner & Ranking**: Define a clear winner (or \"Tie\"), rank all"
-        " the compared models from best to worst (e.g., 1st, 2nd, 3rd, etc.)"
-        " with brief justifications, and explain why technically"
-        " (e.g. why one code structure is better or handles edge cases better).\n"
-        "4. **Optimal Merged Solution**: Synthesize a blueprint/strategy that"
-        " combines all the advantages and best practices of the compared models"
-        " while avoiding all their weaknesses and edge cases.\n"
-        "5. **Prompt for the Coding Agent**: Write a precise, copy-pasteable"
-        " prompt that the user can send to their AI coding agent"
-        " (like Cursor, Windsurf, or Copilot) instructing it to implement"
-        " the combined optimal solution based on the strengths of the analyzed models.\n"
-        "Output the markdown content directly."
-        " Do not wrap your response in an outer ```markdown block.\n"
-    )
-    data = {
-        "contents": [
-            {"parts": [{"text": eval_prompt}]}
-        ]
-    }
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(data).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        print("Sending comparison request to Gemini Flash API...")
-        with cast(HTTPResponse, urllib.request.urlopen(req, timeout=45)) as response:
-            res_bytes = response.read()
-            res_str = res_bytes.decode("utf-8")
-            res_data = cast(dict[str, object], json.loads(res_str))
-            candidates = cast(list[dict[str, object]], res_data.get("candidates", []))
-            if not candidates:
-                raise RuntimeError("Gemini API response has no candidates.")
-            first_candidate = candidates[0]
-            content = cast(dict[str, object], first_candidate.get("content", {}))
-            parts = cast(list[dict[str, object]], content.get("parts", []))
-            if not parts:
-                raise RuntimeError("Gemini API response candidate has no parts.")
-            verdict = cast(str, parts[0].get("text", ""))
-            return verdict
-    except (urllib.error.URLError, HTTPException, OSError, ValueError, TimeoutError) as exc:
-        raise RuntimeError(f"Gemini API request failed: {exc}") from exc
+        
+        def _blocking_request() -> str:
+            print("Sending comparison request to Gemini Flash API...")
+            try:
+                with cast(HTTPResponse, urllib.request.urlopen(req, timeout=45)) as response:
+                    res_bytes = response.read()
+                    res_str = res_bytes.decode("utf-8")
+                    res_data = cast(dict[str, object], json.loads(res_str))
+                    candidates = cast(list[dict[str, object]], res_data.get("candidates", []))
+                    if not candidates:
+                        raise RuntimeError("Gemini API response has no candidates.")
+                    first_candidate = candidates[0]
+                    content = cast(dict[str, object], first_candidate.get("content", {}))
+                    parts = cast(list[dict[str, object]], content.get("parts", []))
+                    if not parts:
+                        raise RuntimeError("Gemini API response candidate has no parts.")
+                    return cast(str, parts[0].get("text", ""))
+            except (urllib.error.URLError, HTTPException, OSError, ValueError, TimeoutError) as exc:
+                raise RuntimeError(f"Gemini API request failed: {exc}") from exc
+
+        return await asyncio.to_thread(_blocking_request)
+
+    def _build_prompt(self, prompt: str, models_data: list[dict[str, str]]) -> str:
+        eval_prompt = (
+            "You are an expert software engineer and AI model evaluator.\n"
+            "Your task is to analyze the following user prompt and compare "
+            "the responses from different AI models.\n"
+            "Determine the winner, rank the model responses from best to worst, "
+            "point out the strengths and weaknesses of each, and provide a clear, "
+            "technical reason for your verdict.\n\n"
+            f"[User Prompt]\n{prompt}\n\n"
+        )
+        for model in models_data:
+            eval_prompt += (
+                f"\n\n==================== RESPONSE FROM "
+                f"{model['name'].upper()} ====================\n"
+            )
+            eval_prompt += f"{model['response']}\n"
+            eval_prompt += (
+                f"==================== END OF RESPONSE FROM "
+                f"{model['name'].upper()} ====================\n"
+            )
+        eval_prompt += (
+            "\nPlease output your evaluation in Markdown format."
+            " Your evaluation must be thorough and include:\n"
+            "1. **Summary Table**: Compare the models across key dimensions"
+            " (e.g. correctness, completeness, formatting, explanation quality).\n"
+            "2. **Key Analysis**: A detailed review of the differences in the"
+            " code, approach, or explanations.\n"
+            "3. **Winner & Ranking**: Define a clear winner (or \"Tie\"), rank all"
+            " the compared models from best to worst (e.g., 1st, 2nd, 3rd, etc.)"
+            " with brief justifications, and explain why technically"
+            " (e.g. why one code structure is better or handles edge cases better).\n"
+            "4. **Optimal Merged Solution**: Synthesize a blueprint/strategy that"
+            " combines all the advantages and best practices of the compared models"
+            " while avoiding all their weaknesses and edge cases.\n"
+            "5. **Prompt for the Coding Agent**: Write a precise, copy-pasteable"
+            " prompt that the user can send to their AI coding agent"
+            " (like Cursor, Windsurf, or Copilot) instructing it to implement"
+            " the combined optimal solution based on the strengths of the analyzed models.\n"
+            "Output the markdown content directly."
+            " Do not wrap your response in an outer ```markdown block.\n"
+        )
+        return eval_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +254,7 @@ def collect_model_responses(
 
             response = f.read_text(encoding="utf-8").strip()
             if not response:
-                continue
+                response = "[NO RESPONSE PROVIDED - FILE EMPTY]"
 
             name = f.stem
             if not name.lower().startswith("model"):
@@ -333,51 +339,99 @@ def build_compare_markdown(
         compact: If True, removes Notes sections, collapses blank lines,
                  and trims trailing whitespace.
     """
-    md: list[str] = [
-        f"# Model Comparison (LMArena Style - {len(models_data)} Models)",
-        "",
-    ]
-    md.append("## The Prompt")
-    md.append(f"> {prompt}" if prompt else "> [No prompt provided]")
-    if not compact:
-        md.append("")
+    is_txt = output_file.suffix.lower() == ".txt"
 
-    for data in models_data:
-        response = data["response"].strip()
-        notes = data.get("notes", "").strip()
+    if is_txt:
+        lines: list[str] = [
+            f"Model Comparison (LMArena Style - {len(models_data)} Models)",
+            "",
+            "The Prompt:",
+            prompt if prompt else "[No prompt provided]",
+        ]
+        if not compact:
+            lines.append("")
 
-        if compact:
-            response = re.sub(r"\n\s*\n+", "\n", response)
+        for data in models_data:
+            response = data["response"].strip()
+            notes = data.get("notes", "").strip()
 
-        md.append("---")
-        md.append(f"## {data['name']}")
-        md.append("### Response")
-        md.append(response)
+            if compact:
+                response = re.sub(r"\n\s*\n+", "\n", response)
+
+            lines.append("=========================================")
+            lines.append(data["name"])
+            lines.append("Response:")
+            lines.append(response)
+
+            if not compact:
+                lines.append("")
+                # Only include Notes section when notes content exists (Req 6)
+                if notes:
+                    lines.append("Notes:")
+                    lines.append(notes)
+                    lines.append("")
+
+        lines.append("=========================================")
+        lines.append("Verdict:")
+        if verdict:
+            lines.append(verdict)
+        else:
+            lines.append("Winner: ")
+            lines.append("Reasoning: ")
+            lines.append("  1. ")
 
         if not compact:
-            md.append("")
-            # Only include Notes section when notes content exists (Req 6)
-            if notes:
-                md.append("### Notes")
-                md.append(notes)
-                md.append("")
+            lines.append("")
 
-    md.append("---")
-    md.append("## Verdict")
-    if verdict:
-        md.append(verdict)
+        lines.append("=========================================")
+        lines.append("Generated by File Aggregator Tool")
     else:
-        md.append("- **Winner:** ")
-        md.append("- **Reasoning:** ")
-        md.append("  1. ")
+        # Markdown (.md)
+        lines = [
+            f"# Model Comparison (LMArena Style - {len(models_data)} Models)",
+            "",
+            "## The Prompt",
+            f"> {prompt}" if prompt else "> [No prompt provided]",
+        ]
+        if not compact:
+            lines.append("")
 
-    if not compact:
-        md.append("")
+        for data in models_data:
+            response = data["response"].strip()
+            notes = data.get("notes", "").strip()
 
-    md.append("---")
-    md.append("*Generated by File Aggregator Tool*")
+            if compact:
+                response = re.sub(r"\n\s*\n+", "\n", response)
 
-    content = "\n".join(md)
+            lines.append("---")
+            lines.append(f"## {data['name']}")
+            lines.append("### Response")
+            lines.append(response)
+
+            if not compact:
+                lines.append("")
+                # Only include Notes section when notes content exists (Req 6)
+                if notes:
+                    lines.append("### Notes")
+                    lines.append(notes)
+                    lines.append("")
+
+        lines.append("---")
+        lines.append("## Verdict")
+        if verdict:
+            lines.append(verdict)
+        else:
+            lines.append("- **Winner:** ")
+            lines.append("- **Reasoning:** ")
+            lines.append("  1. ")
+
+        if not compact:
+            lines.append("")
+
+        lines.append("---")
+        lines.append("*Generated by File Aggregator Tool*")
+
+    content = "\n".join(lines)
 
     if compact:
         # Compact: collapse consecutive blank lines, trim trailing whitespace
@@ -398,52 +452,103 @@ def generate_compare_template(
         output_file: Destination file path.
         model_count: Number of model sections to include in the template.
     """
-    lines: list[str] = [
-        "# Model Comparison (LMArena Style)",
-        "",
-        "## Instructions",
-        "1. Use this document to compare outputs from different LLMs.",
-        "2. Paste the responses in the designated sections.",
-        "3. Vote for the winner based on accuracy, formatting, and instruction following.",
-        "",
-        "---",
-        "",
-        "## The Prompt",
-        "> [Paste your prompt here]",
-        "",
-    ]
+    is_txt = output_file.suffix.lower() == ".txt"
 
-    for i in range(model_count):
-        letter = chr(ord("A") + i)
+    if is_txt:
+        lines = [
+            "Model Comparison (LMArena Style)",
+            "",
+            "Instructions:",
+            "1. Use this document to compare outputs from different LLMs.",
+            "2. Paste the responses in the designated sections.",
+            "3. Vote for the winner based on accuracy, formatting, and instruction following.",
+            "",
+            "=========================================",
+            "",
+            "The Prompt:",
+            "[Paste your prompt here]",
+            "",
+        ]
+
+        for i in range(model_count):
+            letter = chr(ord("A") + i)
+            lines.extend(
+                [
+                    "=========================================",
+                    "",
+                    f"Model {letter}",
+                    "Response:",
+                    f"[Paste Response from Model {letter}]",
+                    "",
+                    "Notes:",
+                    "- ",
+                    "- ",
+                    "",
+                ]
+            )
+
+        lines.extend(
+            [
+                "=========================================",
+                "",
+                "Verdict:",
+                "Winner: [Model A / Model B / Tie]",
+                "Reasoning: ",
+                "  1. ",
+                "  2. ",
+                "",
+                "=========================================",
+                "Generated by File Aggregator Tool",
+            ]
+        )
+    else:
+        # Markdown (.md)
+        lines = [
+            "# Model Comparison (LMArena Style)",
+            "",
+            "## Instructions",
+            "1. Use this document to compare outputs from different LLMs.",
+            "2. Paste the responses in the designated sections.",
+            "3. Vote for the winner based on accuracy, formatting, and instruction following.",
+            "",
+            "---",
+            "",
+            "## The Prompt",
+            "> [Paste your prompt here]",
+            "",
+        ]
+
+        for i in range(model_count):
+            letter = chr(ord("A") + i)
+            lines.extend(
+                [
+                    "---",
+                    "",
+                    f"## Model {letter}",
+                    "### Response",
+                    f"[Paste Response from Model {letter}]",
+                    "",
+                    "### Notes",
+                    "- ",
+                    "- ",
+                    "",
+                ]
+            )
+
         lines.extend(
             [
                 "---",
                 "",
-                f"## Model {letter}",
-                "### Response",
-                f"[Paste Response from Model {letter}]",
+                "## Verdict",
+                "- **Winner:** [Model A / Model B / Tie]",
+                "- **Reasoning:** ",
+                "  1. ",
+                "  2. ",
                 "",
-                "### Notes",
-                "- ",
-                "- ",
-                "",
+                "---",
+                "*Generated by File Aggregator Tool*",
             ]
         )
-
-    lines.extend(
-        [
-            "---",
-            "",
-            "## Verdict",
-            "- **Winner:** [Model A / Model B / Tie]",
-            "- **Reasoning:** ",
-            "  1. ",
-            "  2. ",
-            "",
-            "---",
-            "*Generated by File Aggregator Tool*",
-        ]
-    )
 
     # Ensure output directory exists
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -460,24 +565,10 @@ def archive_model_responses(
     archive_dir: str = "models/ARCHIVE",
     models_dir: Path | None = None,
 ) -> list[Path]:
-    """Archive current model responses.
+    """Archive current model responses by copying them to archive_dir and clearing active templates.
 
-    Supports two archive schemes:
-
-    **timestamp**:
-      Moves each file individually with a timestamp suffix
-      (e.g. ``A_20260622_143022.txt``). Collision-safe via
-      ``_1``, ``_2`` suffixes.
-
-    Args:
-        root: Project root directory (used only as a fallback anchor).
-        archive_dir: Relative path to the archive directory from *root*
-                     (or the models dir parent, depending on *models_dir*).
-        models_dir: Canonical models directory. When ``None``, falls back
-                    to ``root/models/`` for backwards compatibility.
-
-    Returns:
-        List of paths to the archived files.
+    Copies active responses and notes with a timestamp suffix (e.g. A_YYYYMMDD_HHMMSS.txt)
+    and then deletes the active templates from models_dir.
     """
     if models_dir is None:
         models_dir = root / "models"
@@ -485,85 +576,69 @@ def archive_model_responses(
         print("Warning: models/ directory not found — nothing to archive.", file=sys.stderr)
         return []
 
-    # Determine archive base directory — anchored to models_dir's parent
-    # so archives always sit next to active models regardless of where
-    # models_dir lives.
-    archive_base = models_dir.parent / archive_dir
-    archive_base.mkdir(parents=True, exist_ok=True)
+    # Resolve archive_dir path dynamically
+    archive_path = Path(archive_dir)
+    if archive_path.is_absolute():
+        resolved_archive_dir = archive_path
+    else:
+        # If relative, resolve relative to models_dir's parent (which is the arena root dir)
+        # If the path starts with "models" or "answers", strip it first
+        parts = list(archive_path.parts)
+        if parts and parts[0] in ("models", "answers"):
+            resolved_archive_dir = models_dir.parent / Path(*parts[1:])
+        else:
+            resolved_archive_dir = models_dir.parent / archive_path
 
-    archived = _archive_timestamped(models_dir, archive_base)
+    cleared: list[Path] = []
+    
+    # Identify files to archive and clear
+    import re
+    files_to_archive: list[Path] = []
+    
+    for f in models_dir.iterdir():
+        if f.is_file():
+            if re.match(r"^[A-Z]\.txt$", f.name):
+                files_to_archive.append(f)
+            elif re.match(r"^[A-Z]_NOTES\.(txt|md)$", f.name):
+                files_to_archive.append(f)
 
-    return archived
+    if not files_to_archive:
+        return []
 
-
-
-
-
-def _archive_timestamped(models_dir: Path, archive_base: Path) -> list[Path]:
-    """Timestamp archive: move files with ``<name>_<YYYYMMDD_HHMMSS>.<ext>``.
-
-    Legacy behaviour from prompt.txt Req 5. Collision-safe via
-    ``_resolve_archive_path``.
-    """
+    # Ensure archive directory exists
+    resolved_archive_dir.mkdir(parents=True, exist_ok=True)
+    
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    archived: list[Path] = []
+    
+    # 1. Copy files to the archive directory
+    for f in files_to_archive:
+        stem = f.stem
+        suffix = f.suffix
+        dest_name = f"{stem}_{timestamp}{suffix}"
+        dest_path = resolved_archive_dir / dest_name
+        
+        # Handle collision (append _1, _2, etc.)
+        counter = 1
+        while dest_path.exists():
+            dest_name = f"{stem}_{timestamp}_{counter}{suffix}"
+            dest_path = resolved_archive_dir / dest_name
+            counter += 1
+            
+        try:
+            shutil.copy2(f, dest_path)
+        except OSError as e:
+            print(f"Warning: Could not archive {f.name} to {dest_path} - {e}", file=sys.stderr)
 
-    # Find model response files (single uppercase letter + .txt)
-    model_files = sorted(
-        f
-        for f in models_dir.iterdir()
-        if f.is_file() and re.match(r"^[A-Z]\.txt$", f.name)
-    )
+    # 2. Safely unlink active templates after copying
+    for f in files_to_archive:
+        try:
+            f.unlink()
+            cleared.append(f)
+            print(f"Cleared active model file: {f.name}")
+        except OSError as e:
+            print(f"Warning: Could not clear {f.name} - {e}", file=sys.stderr)
 
-    # Collect notes files for those models
-    notes_files: list[Path] = []
-    for mf in model_files:
-        model_name = mf.stem  # e.g. "A"
-        for notes_ext in (".md", ".txt"):
-            notes_file = models_dir / f"{model_name}_NOTES{notes_ext}"
-            if notes_file.is_file():
-                notes_files.append(notes_file)
-
-    all_files_to_archive = model_files + notes_files
-
-    for src_file in all_files_to_archive:
-        name = src_file.stem  # e.g. "A" or "A_NOTES"
-        ext = src_file.suffix  # e.g. ".txt" or ".md"
-        dest = _resolve_archive_path(archive_base, name, ext, timestamp)
-        _ = shutil.move(str(src_file), str(dest))
-        archived.append(dest)
-        print(f"Archived {src_file.name} → {dest.name}")
-
-    return archived
-
-
-def _resolve_archive_path(
-    archive_dir: Path, name: str, ext: str, timestamp: str
-) -> Path:
-    """Resolve archive destination with collision handling.
-
-    Pattern: ``<name>_<timestamp>.<ext>``
-    Collision: ``<name>_<timestamp>_1.<ext>``, ``<name>_<timestamp>_2.<ext>``, etc.
-
-    Args:
-        archive_dir: Archive directory path.
-        name: File stem (e.g. ``"A"`` or ``"A_NOTES"``).
-        ext: File extension including dot (e.g. ``".txt"``).
-        timestamp: Timestamp string in ``YYYYMMDD_HHMMSS`` format.
-
-    Returns:
-        A path that does not collide with any existing file.
-    """
-    dest = archive_dir / f"{name}_{timestamp}{ext}"
-    if not dest.exists():
-        return dest
-
-    counter = 1
-    while True:
-        dest = archive_dir / f"{name}_{timestamp}_{counter}{ext}"
-        if not dest.exists():
-            return dest
-        counter += 1
+    return cleared
 
 
 # ---------------------------------------------------------------------------
