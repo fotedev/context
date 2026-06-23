@@ -81,10 +81,7 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "gemini_judge": False,
     "compact_mode": False,
     "archive": False,
-    "archive_dir": "models/old",
-    # "numbered" → old/N/{A,B,...}.txt (full round snapshots, default).
-    # "timestamp" → ARCHIVE/<name>_<YYYYMMDD_HHMMSS>.<ext> (legacy/prompt.txt).
-    "archive_scheme": "numbered",
+    "archive_dir": "models/ARCHIVE",
 }
 
 # Template written to .context/ignore when auto-created (Req 8)

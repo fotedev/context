@@ -457,22 +457,14 @@ def generate_compare_template(
 
 def archive_model_responses(
     root: Path,
-    archive_dir: str = "models/old",
+    archive_dir: str = "models/ARCHIVE",
     models_dir: Path | None = None,
-    archive_scheme: str = "numbered",
 ) -> list[Path]:
     """Archive current model responses.
 
     Supports two archive schemes:
 
-    **numbered** (default — ``old/N/``):
-      Moves all active model files (``A.txt``, ``B.txt``, …),
-      their notes, and ``prompt.txt`` into a numbered snapshot folder
-      (e.g. ``models/old/3/``). Files keep their original names.
-      The next number is auto-incremented by scanning existing
-      numbered subdirectories.
-
-    **timestamp** (legacy — ``ARCHIVE/``):
+    **timestamp**:
       Moves each file individually with a timestamp suffix
       (e.g. ``A_20260622_143022.txt``). Collision-safe via
       ``_1``, ``_2`` suffixes.
@@ -483,7 +475,6 @@ def archive_model_responses(
                      (or the models dir parent, depending on *models_dir*).
         models_dir: Canonical models directory. When ``None``, falls back
                     to ``root/models/`` for backwards compatibility.
-        archive_scheme: ``"numbered"`` or ``"timestamp"``.
 
     Returns:
         List of paths to the archived files.
@@ -500,62 +491,12 @@ def archive_model_responses(
     archive_base = models_dir.parent / archive_dir
     archive_base.mkdir(parents=True, exist_ok=True)
 
-    archived: list[Path] = []
-
-    if archive_scheme == "numbered":
-        archived = _archive_numbered(models_dir, archive_base)
-    else:
-        archived = _archive_timestamped(models_dir, archive_base)
+    archived = _archive_timestamped(models_dir, archive_base)
 
     return archived
 
 
-def _archive_numbered(models_dir: Path, archive_base: Path) -> list[Path]:
-    """Numbered snapshot: move active files into ``old/N/`` preserving names.
 
-    Scans existing numbered subdirs (``1``, ``2``, …) and picks
-    ``max + 1`` as the new snapshot number.
-
-    Moves: ``A.txt``, ``B.txt``, … model files, any ``*_NOTES.md/.txt``
-    notes files, and ``prompt.txt``.
-    """
-    # Determine next snapshot number
-    existing_numbers: set[int] = set()
-    if archive_base.is_dir():
-        for entry in archive_base.iterdir():
-            if entry.is_dir() and entry.name.isdigit():
-                existing_numbers.add(int(entry.name))
-    next_num = max(existing_numbers, default=0) + 1
-
-    snapshot_dir = archive_base / str(next_num)
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
-
-    archived: list[Path] = []
-
-    # Move all active model response files + prompt.txt + notes
-    for f in sorted(models_dir.iterdir()):
-        if not f.is_file():
-            continue
-        # Model files: single uppercase letter + .txt
-        if re.match(r"^[A-Z]\.txt$", f.name):
-            dest = snapshot_dir / f.name
-            _ = shutil.move(str(f), str(dest))
-            archived.append(dest)
-            print(f"Archived {f.name} → {dest.relative_to(archive_base)}")
-        # Notes files matching model names
-        elif re.match(r"^[A-Z]_NOTES\.(md|txt)$", f.name, re.IGNORECASE):
-            dest = snapshot_dir / f.name
-            _ = shutil.move(str(f), str(dest))
-            archived.append(dest)
-            print(f"Archived {f.name} → {dest.relative_to(archive_base)}")
-        # prompt.txt
-        elif f.name == "prompt.txt":
-            dest = snapshot_dir / "prompt.txt"
-            _ = shutil.move(str(f), str(dest))
-            archived.append(dest)
-            print(f"Archived prompt.txt → {dest.relative_to(archive_base)}")
-
-    return archived
 
 
 def _archive_timestamped(models_dir: Path, archive_base: Path) -> list[Path]:

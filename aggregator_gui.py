@@ -49,6 +49,7 @@ from core.parser import (
     resolve_models_dir,
     discover_files_txt,
     migrate_old_outputs,
+    display_settings,
 )
 from core.counter import count_tokens
 from core.judge import (
@@ -237,7 +238,7 @@ class AggregatorGUI(tk.Tk):
     Status / progress bar
     """
 
-    def __init__(self) -> None:
+    def __init__(self, cmd_root: Path | None = None, cmd_output: str | None = None) -> None:
         super().__init__()
         _ = self.title("File Aggregator")
         _ = self.geometry("1100x750")
@@ -245,7 +246,8 @@ class AggregatorGUI(tk.Tk):
         _ = self.configure(bg=_BG)
 
         # State
-        self._project_root: Path = self._detect_initial_root()
+        self._cmd_output: str | None = cmd_output
+        self._project_root: Path = cmd_root if cmd_root else self._detect_initial_root()
         self._busy: bool = False          # True while a background thread runs
         self._settings: dict[str, object] = {}
         self._suppress_settings_save: bool = False
@@ -327,7 +329,12 @@ class AggregatorGUI(tk.Tk):
             self._judge_var.set(bool(self._settings.get("gemini_judge", False)))
             self._compact_var.set(bool(self._settings.get("compact_mode", False)))
             self._archive_var.set(bool(self._settings.get("archive", False)))
-            self._output_dir_var.set(str(self._settings.get("output_dir", "context_output")))
+            
+            # Apply CLI output override if present (Command Line Flags > Settings File)
+            if self._cmd_output:
+                self._output_dir_var.set(self._cmd_output)
+            else:
+                self._output_dir_var.set(str(self._settings.get("output_dir", "context_output")))
             
             try:
                 count = int(self._settings.get("model_count", 2))
@@ -1119,10 +1126,9 @@ class AggregatorGUI(tk.Tk):
             # --- Archiving workflow -------------------------------------------
             if archive:
                 self._step("Archiving model responses …")
-                archive_dir = str(settings.get("archive_dir", "models/old"))
-                archive_scheme = str(settings.get("archive_scheme", "numbered"))
+                archive_dir = str(settings.get("archive_dir", "models/ARCHIVE"))
                 archived = archive_model_responses(
-                    root, archive_dir, models_dir, archive_scheme,
+                    root, archive_dir, models_dir,
                 )
                 if archived:
                     ensure_model_templates(root, model_count, models_dir)
@@ -1344,7 +1350,45 @@ import re   # noqa: E402  (already in core.parser but needed directly here)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    app = AggregatorGUI()
+    """Orchestrate CLI parsing and launch GUI."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="aggregator_gui",
+        description="GUI for File Aggregator.",
+    )
+    _ = parser.add_argument(
+        "root",
+        nargs="?",
+        default=None,
+        help="Optional project root directory (defaults to auto-detect / CWD).",
+    )
+    _ = parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Ignored in GUI (the GUI is intrinsically interactive).",
+    )
+    _ = parser.add_argument(
+        "--settings",
+        action="store_true",
+        help="Print the active settings file path, content, and schema; then exit.",
+    )
+    _ = parser.add_argument(
+        "--output",
+        default=None,
+        help="Override the output folder (Command Line Flags > Settings File).",
+    )
+    args = parser.parse_args()
+
+    cmd_root = Path(args.root).resolve() if args.root else None
+
+    # Req 10: --settings CLI flag
+    if args.settings:
+        root_to_use = cmd_root if cmd_root else Path.cwd()
+        display_settings(root_to_use)
+        return
+
+    app = AggregatorGUI(cmd_root=cmd_root, cmd_output=args.output)
     app.mainloop()
 
 

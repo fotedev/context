@@ -463,8 +463,7 @@ def main() -> None:
     archive = bool(settings.get("archive", False))
     raw_model_count = settings.get("model_count", 2)
     model_count = int(raw_model_count) if isinstance(raw_model_count, (int, str)) else 2
-    archive_dir = str(settings.get("archive_dir", "models/old"))
-    archive_scheme = str(settings.get("archive_scheme", "numbered"))
+    archive_dir = str(settings.get("archive_dir", "models/ARCHIVE"))
 
     # --- Migrate legacy CWD outputs + root models/ into output_dir/ ------
     _ = migrate_old_outputs(init_root, output_dir)
@@ -490,7 +489,7 @@ def main() -> None:
     # --- Req 5: archiving workflow ---------------------------------------
     if archive:
         archived = archive_model_responses(
-            init_root, archive_dir, models_dir, archive_scheme,
+            init_root, archive_dir, models_dir,
         )
         if archived:
             # Re-create fresh templates for the configured model count.
