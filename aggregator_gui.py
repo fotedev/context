@@ -21,8 +21,7 @@ import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, font, messagebox, scrolledtext, simpledialog, ttk
-from typing import Optional
+from tkinter import filedialog, font, messagebox, scrolledtext, ttk
 
 # ── Encoding fix for Windows terminals ───────────────────────────────────────
 if hasattr(sys.stdout, "reconfigure"):
@@ -56,7 +55,6 @@ from core.judge import (
     build_compare_markdown,
     collect_model_responses,
     generate_compare_template,
-    get_api_key,
     get_gemini_verdict,
     load_dotenv,
     archive_model_responses,
@@ -94,23 +92,6 @@ _BTN_TEXT   = "#1e1e2e"
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _entry_display(path: Path, ranges, is_important: bool) -> str:
-    """Return a human-readable queue label for a files.txt entry tuple.
-
-    Examples
-    --------
-    Full file      →  /home/proj/main.py
-    Snippet        →  /home/proj/main.py  [45-80]
-    Multi-range    →  /home/proj/main.py  [5-10, 25-30]
-    Important      →  ★ /home/proj/types.ts  [1-30]
-    """
-    base = str(path)
-    if ranges:
-        range_str = ", ".join(f"{s}-{e}" for s, e in ranges)
-        base += f"  [{range_str}]"
-    prefix = "★ " if is_important else "  "
-    return f"{prefix}{base}"
-
 
 def _assert_writable(path: Path) -> None:
     """Raise OSError if *path* cannot be opened for appending."""
@@ -137,11 +118,11 @@ class _ApiKeyDialog(tk.Toplevel):
 
     def __init__(self, parent: tk.Tk) -> None:
         super().__init__(parent)
-        self.title("Gemini API Key Required")
-        self.configure(bg=_BG)
-        self.resizable(False, False)
+        _ = self.title("Gemini API Key Required")
+        _ = self.configure(bg=_BG)
+        _ = self.resizable(False, False)
         self.grab_set()             # modal
-        self.result: Optional[str] = None
+        self.result: str | None = None
         self.save_to_env: bool = False
 
         self._build()
@@ -149,7 +130,7 @@ class _ApiKeyDialog(tk.Toplevel):
         self.update_idletasks()
         px = parent.winfo_rootx() + (parent.winfo_width()  - self.winfo_width())  // 2
         py = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 2
-        self.geometry(f"+{px}+{py}")
+        _ = self.geometry(f"+{px}+{py}")
         self.wait_window()
 
     def _build(self) -> None:
@@ -172,7 +153,7 @@ class _ApiKeyDialog(tk.Toplevel):
         ).pack(fill="x", padx=20, pady=(0, 4))
 
         # Key entry (show * while typing)
-        self._key_var = tk.StringVar()
+        self._key_var: tk.StringVar = tk.StringVar()
         entry = tk.Entry(
             self,
             textvariable=self._key_var,
@@ -185,10 +166,10 @@ class _ApiKeyDialog(tk.Toplevel):
         )
         entry.pack(padx=20, pady=4, fill="x")
         entry.focus_set()
-        entry.bind("<Return>", lambda _e: self._confirm())
+        _ = entry.bind("<Return>", lambda _e: self._confirm())
 
         # Save checkbox
-        self._save_var = tk.BooleanVar(value=False)
+        self._save_var: tk.BooleanVar = tk.BooleanVar(value=False)
         tk.Checkbutton(
             self,
             text="Save key to .env file in aggregator directory",
@@ -258,10 +239,10 @@ class AggregatorGUI(tk.Tk):
 
     def __init__(self) -> None:
         super().__init__()
-        self.title("File Aggregator")
-        self.geometry("1100x750")
-        self.minsize(860, 560)
-        self.configure(bg=_BG)
+        _ = self.title("File Aggregator")
+        _ = self.geometry("1100x750")
+        _ = self.minsize(860, 560)
+        _ = self.configure(bg=_BG)
 
         # State
         self._project_root: Path = self._detect_initial_root()
@@ -270,22 +251,43 @@ class AggregatorGUI(tk.Tk):
         self._suppress_settings_save: bool = False
 
         # Settings Tkinter variables
-        self._judge_var = tk.BooleanVar(value=True)
-        self._compact_var = tk.BooleanVar(value=False)
-        self._archive_var = tk.BooleanVar(value=False)
-        self._output_dir_var = tk.StringVar(value="context_output")
-        self._model_count_var = tk.IntVar(value=2)
-        self._output_format_var = tk.StringVar(value="md")
+        self._judge_var: tk.BooleanVar = tk.BooleanVar(value=True)
+        self._compact_var: tk.BooleanVar = tk.BooleanVar(value=False)
+        self._archive_var: tk.BooleanVar = tk.BooleanVar(value=False)
+        self._output_dir_var: tk.StringVar = tk.StringVar(value="context_output")
+        self._model_count_var: tk.IntVar = tk.IntVar(value=2)
+        self._output_format_var: tk.StringVar = tk.StringVar(value="md")
+
+        # UI Font variables
+        self._font_ui: font.Font | None = None
+        self._font_mono: font.Font | None = None
+        self._font_title: font.Font | None = None
+        self._font_small: font.Font | None = None
+
+        # UI Components variables
+        self._tree_title: tk.Label | None = None
+        self._search_var: tk.StringVar | None = None
+        self._tree: ttk.Treeview | None = None
+        self._queue_title: tk.Label | None = None
+        self._queue_listbox: tk.Listbox | None = None
+        self._queue_colours: dict[int, str] = {}
+        self._api_key_label: tk.Label | None = None
+        self._log: scrolledtext.ScrolledText | None = None
+        self._project_path_var: tk.StringVar | None = None
+        self._project_path_entry: tk.Entry | None = None
+        self._progress: ttk.Progressbar | None = None
+        self._status_var: tk.StringVar | None = None
+        self._status_lbl: tk.Label | None = None
 
         # Load initial settings
         self._load_and_apply_settings()
 
         # Set up traces for instant auto-save (except for entry fields where we save on focus loss / enter)
-        self._judge_var.trace_add("write", self._save_current_settings)
-        self._compact_var.trace_add("write", self._save_current_settings)
-        self._archive_var.trace_add("write", self._save_current_settings)
-        self._model_count_var.trace_add("write", self._save_current_settings)
-        self._output_format_var.trace_add("write", self._save_current_settings)
+        _ = self._judge_var.trace_add("write", self._save_current_settings)
+        _ = self._compact_var.trace_add("write", self._save_current_settings)
+        _ = self._archive_var.trace_add("write", self._save_current_settings)
+        _ = self._model_count_var.trace_add("write", self._save_current_settings)
+        _ = self._output_format_var.trace_add("write", self._save_current_settings)
 
         # UI setup
         self._setup_fonts()
@@ -503,7 +505,7 @@ class AggregatorGUI(tk.Tk):
         self._tree.pack(fill="both", expand=True)
 
         # Double-click to add single file
-        self._tree.bind("<Double-1>", lambda _e: self._add_selected())
+        _ = self._tree.bind("<Double-1>", lambda _e: self._add_selected())
 
         tk.Button(
             frame,
@@ -643,8 +645,8 @@ class AggregatorGUI(tk.Tk):
         out_dir_entry.pack(side="left", padx=(0, 16))
         
         # Save output dir settings when losing focus or hitting Enter (avoid trace write spam)
-        out_dir_entry.bind("<FocusOut>", self._save_current_settings)
-        out_dir_entry.bind("<Return>", self._save_current_settings)
+        _ = out_dir_entry.bind("<FocusOut>", self._save_current_settings)
+        _ = out_dir_entry.bind("<Return>", self._save_current_settings)
 
         # Model Count
         tk.Label(
@@ -750,7 +752,7 @@ class AggregatorGUI(tk.Tk):
             font=self._font_mono, width=50,
         )
         self._project_path_entry.pack(side="left", padx=(0, 6), pady=8, ipady=3)
-        self._project_path_entry.bind("<Return>", self._on_path_submit)
+        _ = self._project_path_entry.bind("<Return>", self._on_path_submit)
 
         tk.Button(
             bar, text="Apply",
