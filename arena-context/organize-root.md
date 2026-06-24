@@ -9,6 +9,7 @@ This instruction set is a mini-skill for the AI agent to organize root-level fil
 | `./arena.txt` · `./structure.txt` · `./compare.md` | `context_output/` | Legacy tool outputs |
 | `./files.txt` · `./files_*.txt` | `.context/inputs/` | Legacy inputs to be discovered |
 | `./models/` (entire directory) | `context_output/models/` | Model responses and legacy archives |
+| `./models/ARCHIVE/` | `context_output/models/ARCHIVE/` | Timestamped archive history |
 
 ## Agent Instructions
 
@@ -38,3 +39,7 @@ When you detect legacy files in the project root, perform the following steps:
      }
      ```
    - Ensure `.context/ignore` contains ignore entries for `context_output/` and `.context/` to prevent infinite recursion during file aggregation.
+
+6. **Verify Migration**:
+   - Run `python aggregator.py` (or `agg`) to confirm the tool discovers inputs from `.context/inputs/` and writes outputs to `context_output/arenas/`.
+   - If the tool reports "No files*.txt found", the migration was incomplete — check for leftover files in the root.

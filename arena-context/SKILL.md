@@ -88,6 +88,11 @@ This way the input file is self-documenting — anyone reading it knows what pro
 ### Report Format
 After writing `.context/inputs/<descriptive-name>.txt` (or `./files.txt`), always reply with:
 ✅ **.context/inputs/<descriptive-name>.txt updated** — [N] files, [S] snippets, [I] structures selected for [problem summary]
+
+**Arena output:** `context_output/arenas/NNN-<descriptive-name>/` (where NNN is auto-incremented)
+- `arena.txt` — aggregated source code
+- `structure.txt` — project tree
+- `compare.md` — model comparison template
 **Full files:**
 - `path/to/file.tsx` — reason
 **Code snippets:**

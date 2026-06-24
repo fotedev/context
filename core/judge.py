@@ -592,7 +592,6 @@ def archive_model_responses(
     cleared: list[Path] = []
     
     # Identify files to archive and clear
-    import re
     files_to_archive: list[Path] = []
     
     for f in models_dir.iterdir():
