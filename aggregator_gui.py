@@ -17,6 +17,7 @@ No third-party dependencies required beyond the standard library.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import threading
 import asyncio
@@ -27,9 +28,9 @@ from typing import Optional, Any, cast
 
 # ── Encoding fix for Windows terminals ───────────────────────────────────────
 if hasattr(sys.stdout, "reconfigure"):
-    getattr(sys.stdout, "reconfigure")(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"):
-    getattr(sys.stderr, "reconfigure")(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 # ── Project directory on sys.path so core/ is importable ─────────────────────
 _PROJECT_DIR = Path(__file__).resolve().parent
@@ -961,15 +962,15 @@ class AggregatorGUI(tk.Tk):
         self._queue_listbox.delete(0, "end")
 
         if not self.files_txt_path.is_file():
-            self._queue_title.configure(text="📋  Queue  (0 entries)")
+            self._queue_title.configure(text="📋  Queue  (0 files)")
             return
 
         # Read raw lines so the display preserves the exact syntax
-        # (snippet ranges, ! prefix) without re-serialising through Path
+        # (snippet ranges, ! prefix, and comments) without re-serialising through Path
         raw_lines = [
             l.strip()
             for l in self.files_txt_path.read_text(encoding="utf-8").splitlines()
-            if l.strip() and not l.strip().startswith("#")
+            if l.strip()
         ]
 
         for line in raw_lines:
@@ -977,15 +978,18 @@ class AggregatorGUI(tk.Tk):
 
         # Colour code by type
         for idx, line in enumerate(raw_lines):
-            if line.startswith("!"):
+            if line.startswith("#"):
+                self._queue_listbox.itemconfigure(idx, foreground=_FG_DIM)
+            elif line.startswith("!"):
                 self._queue_listbox.itemconfigure(idx, foreground=_MAUVE)
             elif re.search(r":\d+-\d+", line):
                 self._queue_listbox.itemconfigure(idx, foreground=_TEAL)
             else:
                 self._queue_listbox.itemconfigure(idx, foreground=_FG)
 
+        file_count = sum(1 for l in raw_lines if not l.startswith("#"))
         self._queue_title.configure(
-            text=f"📋  Queue  ({len(raw_lines)} {'entry' if len(raw_lines) == 1 else 'entries'})"
+            text=f"📋  Queue  ({file_count} {'file' if file_count == 1 else 'files'})"
         )
 
     def _add_selected(self) -> None:
@@ -995,13 +999,13 @@ class AggregatorGUI(tk.Tk):
             self._log_write("No items selected in the tree.", tag="warn")
             return
 
-        # Read existing raw lines to avoid duplicates while preserving order
+        # Read existing raw lines to avoid duplicates while preserving comments/order
         existing_lines: list[str] = []
         if self.files_txt_path.is_file():
             existing_lines = [
                 l.strip()
                 for l in self.files_txt_path.read_text(encoding="utf-8").splitlines()
-                if l.strip() and not l.strip().startswith("#")
+                if l.strip()
             ]
 
         # Build a set of already-queued absolute paths (ignoring range suffixes)
@@ -1012,7 +1016,7 @@ class AggregatorGUI(tk.Tk):
                 line = line.rsplit(":", 1)[0]
             return line
 
-        existing_bare = {_bare_path(l) for l in existing_lines}
+        existing_bare = {_bare_path(l) for l in existing_lines if not l.startswith("#")}
 
         added = 0
         new_lines = list(existing_lines)
@@ -1046,7 +1050,7 @@ class AggregatorGUI(tk.Tk):
         existing_lines = [
             l.strip()
             for l in self.files_txt_path.read_text(encoding="utf-8").splitlines()
-            if l.strip() and not l.strip().startswith("#")
+            if l.strip()
         ]
         indices_set = set(indices)
         new_lines = [l for i, l in enumerate(existing_lines) if i not in indices_set]
@@ -1366,12 +1370,6 @@ class AggregatorGUI(tk.Tk):
         self._progress.stop()
         self._progress.pack_forget()
         self._cancel_btn.pack_forget()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Missing import needed by _refresh_queue colour logic
-# ─────────────────────────────────────────────────────────────────────────────
-import re   # noqa: E402  (already in core.parser but needed directly here)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -751,7 +751,8 @@ def stream_file_content(
 def read_file_paths(source_file: Path) -> list[Path]:
     """Read one file path per line from a plain-text source file.
 
-    Blank lines and lines consisting only of whitespace are skipped.
+    Blank lines, lines consisting only of whitespace, and comment lines
+    (starting with ``#``) are skipped.
 
     Args:
         source_file: Path to the text file listing source paths.
@@ -766,11 +767,18 @@ def read_file_paths(source_file: Path) -> list[Path]:
         raise FileNotFoundError(f"Source paths file not found: {source_file}")
 
     paths: list[Path] = []
-    with source_file.open("r", encoding="utf-8") as fh:
-        for line in fh:
-            stripped = line.strip()
-            if stripped:
-                paths.append(Path(stripped))
+    
+    try:
+        with source_file.open("r", encoding="utf-8-sig") as fh:
+            lines = fh.readlines()
+    except UnicodeDecodeError:
+        with source_file.open("r", encoding="utf-16") as fh:
+            lines = fh.readlines()
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            paths.append(Path(stripped))
 
     return paths
 

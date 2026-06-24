@@ -7,34 +7,31 @@ CLI tool that aggregates source files for LMArena blind pairwise comparisons.
 ```
 project/
 ├── .context/
-│   └── settings.json          # persistent preferences
-├── .contextignore                # custom ignore patterns
-├── files.txt                   # input: file paths (main)
-├── files_1.txt                 # input: file paths (set 1)
-├── files_2.txt                 # input: file paths (set 2)
-├── models/
-│   ├── prompt.txt              # prompt for LMArena
-│   ├── A.txt                   # model A response
-│   ├── B.txt                   # model B response
-│   ├── C.txt                   # model C response (if 4 models)
-│   ├── D.txt                   # model D response (if 4 models)
-│   ├── A_NOTES.txt             # notes for model A (optional)
-│   ├── B_NOTES.txt             # notes for model B (optional)
-│   └── ARCHIVE/                # archived responses
-│       ├── A_20260622_143022.txt
-│       └── B_20260622_143022.txt
-├── context_output/             # all generated outputs
-│   ├── arena.txt               # aggregated code from files.txt
-│   ├── arena_1.txt             # aggregated code from files_1.txt
-│   ├── arena_2.txt             # aggregated code from files_2.txt
-│   ├── structure.txt           # project tree from files.txt
-│   ├── structure_1.txt         # project tree from files_1.txt
-│   ├── structure_2.txt         # project tree from files_2.txt
-│   ├── compare.md              # model comparison (or .txt)
-│   ├── compare_1.md            # model comparison for files_1.txt
-│   └── compare_2.md            # model comparison for files_2.txt
-├── .env                        # GEMINI_API_KEY (tool root, not project)
-└── aggregator.py               # main script
+│   ├── settings.json          # persistent preferences
+│   ├── ignore                 # user-defined ignore patterns
+│   └── inputs/                # input manifests (primary discovery location)
+│       ├── fix-navbar-bug.txt # agent-created input files
+│       └── refactor-api.txt
+├── context_output/            # all generated outputs
+│   ├── arenas/                # per-input arena folders (auto-numbered)
+│   │   ├── 001-fix-navbar-bug/
+│   │   │   ├── arena.txt      # aggregated code
+│   │   │   ├── structure.txt  # project tree
+│   │   │   ├── compare.md     # model comparison (or .txt)
+│   │   │   └── answers/       # model responses + prompt
+│   │   │       ├── prompt.txt
+│   │   │       ├── A.txt
+│   │   │       ├── B.txt
+│   │   │       └── ARCHIVE/   # archived responses
+│   │   └── 002-refactor-api/
+│   │       └── ...
+│   └── models/                # legacy models directory (migrated from root)
+│       ├── A.txt
+│       ├── B.txt
+│       └── prompt.txt
+├── files.txt                  # fallback input (CWD, for quick one-off runs)
+├── .env                       # GEMINI_API_KEY (tool root, not project)
+└── aggregator.py              # main script
 ```
 
 ---

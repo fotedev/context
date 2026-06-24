@@ -32,13 +32,15 @@ from textual.widgets import (
 _PROJECT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_PROJECT_DIR))
 
-from aggregator import (  # noqa: E402
+from core.parser import (  # noqa: E402
     aggregate_files,
     find_project_root,
     generate_tree,
     load_ignore_patterns,
+    read_file_entries,
+    read_file_paths,
+    should_ignore,
 )
-from core.parser import read_file_entries, read_file_paths, should_ignore
 from core.counter import count_tokens
 from core.judge import collect_model_responses, build_compare_markdown
 
@@ -138,6 +140,11 @@ Button {
 
 TreeEntry {
     height: 1;
+    padding: 0;
+    margin: 0;
+    border: none;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 APIKeyModal {
@@ -197,9 +204,38 @@ class TreeEntry(Checkbox):
 
     file_path: Path
 
+    BINDINGS = [
+        Binding("up", "focus_previous", "Previous", show=False),
+        Binding("down", "focus_next", "Next", show=False),
+        Binding("pageup", "page_up", "Page Up", show=False),
+        Binding("pagedown", "page_down", "Page Down", show=False),
+        Binding("tab", "skip_tree_forward", "Skip Forward", show=False),
+        Binding("shift+tab", "skip_tree_backward", "Skip Backward", show=False),
+    ]
+
     def __init__(self, label: str, file_path: Path, value: bool = False) -> None:
         super().__init__(label, value=value)
         self.file_path = file_path
+
+    def action_focus_previous(self) -> None:
+        self.app.action_focus_previous()
+
+    def action_focus_next(self) -> None:
+        self.app.action_focus_next()
+
+    def action_page_up(self) -> None:
+        for _ in range(10):
+            self.app.action_focus_previous()
+
+    def action_page_down(self) -> None:
+        for _ in range(10):
+            self.app.action_focus_next()
+
+    def action_skip_tree_forward(self) -> None:
+        self.app.query_one("#btn-refresh", Button).focus()
+
+    def action_skip_tree_backward(self) -> None:
+        self.app.query_one("#path-input", Input).focus()
 
 
 class AggregatorTUI(App[None]):
@@ -636,25 +672,41 @@ class AggregatorTUI(App[None]):
         self._load_queue()
 
     def _update_files_txt(self, path: Path, *, add: bool) -> None:
-        """Update files.txt with path addition or removal."""
-        existing = []
+        """Update files.txt with path addition or removal, preserving comments."""
+        raw_lines: list[str] = []
         if _FILES_TXT.is_file():
             try:
-                existing = read_file_paths(_FILES_TXT)
+                raw_lines = _FILES_TXT.read_text(encoding="utf-8").splitlines()
             except Exception:
                 pass
 
         path_resolved = path.resolve()
-        existing_resolved = [p.resolve() for p in existing]
+
+        # Build a list of resolved paths for non-comment lines
+        existing_resolved: list[tuple[int, Path]] = []
+        for idx, line in enumerate(raw_lines):
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#"):
+                try:
+                    # Strip any optional line range suffix
+                    from core.parser import parse_file_entry
+                    p_parsed, _, _ = parse_file_entry(stripped)
+                    existing_resolved.append((idx, p_parsed.resolve()))
+                except Exception:
+                    pass
 
         if add:
-            if path_resolved not in existing_resolved:
-                existing.append(path)
+            # Add only if not already present
+            if not any(r[1] == path_resolved for r in existing_resolved):
+                raw_lines.append(str(path))
         else:
-            existing = [p for p in existing if p.resolve() != path_resolved]
+            # Remove all occurrences of this path
+            indices_to_remove = {r[0] for r in existing_resolved if r[1] == path_resolved}
+            raw_lines = [line for idx, line in enumerate(raw_lines) if idx not in indices_to_remove]
 
+        # Write lines back, preserving comments and blank lines
         _FILES_TXT.write_text(
-            "\n".join(str(p) for p in existing) + ("\n" if existing else ""),
+            "\n".join(raw_lines) + ("\n" if raw_lines else ""),
             encoding="utf-8",
         )
 
