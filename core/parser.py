@@ -90,8 +90,63 @@ DEFAULT_SETTINGS: dict[str, object] = {
 _DEFAULT_IGNORE_TEMPLATE = """\
 # Context Tool — Ignore Patterns
 # One pattern per line.  # Comments and blank lines are ignored.
-# These patterns are ADDITIONAL to the built-in defaults.
-# Built-in defaults already cover: .git, node_modules, __pycache__, etc.
+# Edit this file to add or remove patterns. The tool ignores ONLY the patterns listed here.
+
+# Version control
+.git
+
+# Dependency directories
+node_modules
+venv
+.venv
+.pnpm-store
+
+# Editor & IDE files
+.vscode
+.idea
+.cursor
+.windsurf
+.github
+.agent
+.agents
+.speckit
+.specify
+desktop.ini
+.DS_Store
+
+# Temporary, cache, and build files
+__pycache__
+*.pyc
+dist
+build
+.next
+.vercel
+.index_ignore
+compare-template.bak
+compare_4.txt
+compare_of_compare.txt
+migrations.old
+
+# Tool inputs, outputs, and scripts
+context_output
+.context
+files.txt
+arena.txt
+structure.txt
+llm.txt
+compare.md
+compare.txt
+compare_*.md
+compare_*.txt
+files_*.txt
+arena_*.txt
+structure_*.txt
+models
+models/old
+get-shit-done
+gifts
+agents
+scripts
 """
 
 # ---------------------------------------------------------------------------
@@ -122,13 +177,24 @@ def ensure_context_dir(root: Path) -> Path:
             f"Created {settings_path} — edit your preferences or delete to reset."
         )
 
-    # Auto-create ignore file if missing
+    # Auto-create ignore file if missing or update if it contains the legacy template description
     ignore_path = context_dir / "ignore"
+    should_write = False
     if not ignore_path.is_file():
+        should_write = True
+    else:
+        try:
+            content = ignore_path.read_text(encoding="utf-8")
+            if "These patterns are ADDITIONAL to the built-in defaults" in content:
+                should_write = True
+        except OSError:
+            pass
+
+    if should_write:
         _ = ignore_path.write_text(
             _DEFAULT_IGNORE_TEMPLATE, encoding="utf-8"
         )
-        print(f"Created {ignore_path}")
+        print(f"Created/Updated {ignore_path} with default ignore patterns.")
 
     # Auto-create inputs directory if missing
     inputs_dir = context_dir / "inputs"
@@ -358,13 +424,7 @@ def get_display_path(path: Path, root: Path | None) -> str:
 
 
 def load_ignore_patterns(root: Path | None) -> frozenset[str]:
-    """Load exclusion patterns from config files plus built-in defaults.
-
-    Pattern sources (merged in order):
-    1. Built-in ``_DEFAULT_IGNORE`` (always active).
-    2. ``.context/ignore`` — user-managed patterns inside the config dir.
-    3. ``.contextignore`` — legacy file at the project root (backwards compat).
-    4. ``.index_ignore`` — older legacy file (backwards compat).
+    """Load exclusion patterns from the .context/ignore file.
 
     If ``.context/ignore`` does not exist, it is auto-created with a
     default template via :func:`ensure_context_dir`.
@@ -376,7 +436,7 @@ def load_ignore_patterns(root: Path | None) -> frozenset[str]:
     Returns:
         Immutable set of glob patterns identifying paths to exclude.
     """
-    extra: set[str] = set()
+    patterns: set[str] = set()
     search_dir = root if root is not None else Path.cwd()
 
     # Ensure .context/ignore exists
@@ -385,19 +445,9 @@ def load_ignore_patterns(root: Path | None) -> frozenset[str]:
     # Read .context/ignore
     context_ignore = search_dir / ".context" / "ignore"
     if context_ignore.is_file():
-        extra.update(_read_pattern_file(context_ignore))
+        patterns.update(_read_pattern_file(context_ignore))
 
-    # Read .contextignore (legacy, backwards compat)
-    contextignore = search_dir / ".contextignore"
-    if contextignore.is_file():
-        extra.update(_read_pattern_file(contextignore))
-
-    # Read .index_ignore (older legacy, backwards compat)
-    index_ignore = search_dir / ".index_ignore"
-    if index_ignore.is_file():
-        extra.update(_read_pattern_file(index_ignore))
-
-    return _DEFAULT_IGNORE | frozenset(extra)
+    return frozenset(patterns)
 
 
 def _read_pattern_file(path: Path) -> set[str]:
