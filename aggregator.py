@@ -163,6 +163,30 @@ def _prompt_merge() -> bool:
     )
 
 
+def _prompt_update_structure(prompt: str) -> bool:
+    """Prompt the user whether to update structure.txt.
+
+    * Enter key or inputs like 'y', 'yes' -> True (Update)
+    * Space then Enter or inputs like 'n', 'no' -> False (Keep existing)
+    """
+    while True:
+        try:
+            raw = input(prompt)
+        except EOFError:
+            return True
+
+        if " " in raw:
+            return False
+        if raw == "" or raw.strip() == "":
+            return True
+        stripped = raw.strip().lower()
+        if stripped in ("y", "yes"):
+            return True
+        if stripped in ("n", "no"):
+            return False
+        print("Press Enter to update, or Space then Enter to skip/keep.")
+
+
 # ---------------------------------------------------------------------------
 # Output filename helpers (Req 2 — suffixed outputs)
 # ---------------------------------------------------------------------------
@@ -222,7 +246,6 @@ def _process_one(
     """
     arena_dir = resolve_arena_dir(output_dir, arena_name)
     arena_path = arena_dir / "arena.txt"
-    structure_path = arena_dir / "structure.txt"
     compare_path = arena_dir / f"compare.{output_format}"
 
     answers_dir = arena_dir / "answers"
@@ -245,28 +268,10 @@ def _process_one(
         print(
             f"No entries found in {files_txt.name} — writing empty outputs to {output_dir}/"
         )
-        for p in (arena_path, structure_path):
-            p.parent.mkdir(parents=True, exist_ok=True)
-            _ = p.write_text("", encoding="utf-8")
+        arena_path.parent.mkdir(parents=True, exist_ok=True)
+        _ = arena_path.write_text("", encoding="utf-8")
         generate_compare_template(compare_path)
         return
-
-    # 1. Project tree
-    if root:
-        print(f"[{files_txt.name}] Project root detected: {root}")
-        tree_lines = [f"Project Root: {root.name}/"] + generate_tree(
-            root, root, patterns
-        )
-        _ = structure_path.write_text(
-            "\n".join(tree_lines), encoding="utf-8"
-        )
-        print(f"[{files_txt.name}] Structure written → {structure_path}")
-    else:
-        print(
-            f"[{files_txt.name}] No project root detected — skipping structure.",
-            file=sys.stderr,
-        )
-        _ = structure_path.write_text("", encoding="utf-8")
 
     # 2. File aggregation
     full_files = sum(1 for _, ranges, _ in entries if ranges is None)
@@ -514,6 +519,41 @@ def main() -> None:
         root = cwd
 
     patterns = load_ignore_patterns(root)
+
+    # --- Centralize structure.txt and Drift Detection --------------------
+    # Build live directory tree representation
+    scan_root = root if root else cwd
+    tree_lines = [f"Project Root: {scan_root.name}/"] + generate_tree(
+        scan_root, scan_root, patterns
+    )
+    live_structure = "\n".join(tree_lines)
+
+    structure_path = output_dir / "structure.txt"
+    should_write_structure = False
+
+    if not structure_path.is_file():
+        should_write_structure = True
+    else:
+        try:
+            existing_structure = structure_path.read_text(encoding="utf-8")
+        except OSError:
+            existing_structure = ""
+
+        if existing_structure.strip() != live_structure.strip():
+            if is_interactive:
+                prompt = "WARNING: Project structure has changed. Would you like to update structure.txt? [Y/n] "
+                if _prompt_update_structure(prompt):
+                    should_write_structure = True
+                else:
+                    print("Kept existing structure.txt.")
+            else:
+                # Silent/non-interactive mode defaults to updating
+                should_write_structure = True
+
+    if should_write_structure:
+        structure_path.parent.mkdir(parents=True, exist_ok=True)
+        _ = structure_path.write_text(live_structure, encoding="utf-8")
+        print(f"Structure written → {structure_path}")
 
     # --- Req 2: discover and process ALL files*.txt ----------------------
     discovered = discover_files_txt(cwd, root, settings)

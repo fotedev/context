@@ -545,7 +545,7 @@ class AggregatorTUI(App[None]):
             arena_dir = resolve_arena_dir(output_dir, _FILES_TXT.stem)
             
             arena_txt = arena_dir / "arena.txt"
-            structure_txt = arena_dir / "structure.txt"
+            structure_txt = output_dir / "structure.txt"
 
             if root:
                 tree_lines = [f"Project Root: {root.name}/"] + generate_tree(

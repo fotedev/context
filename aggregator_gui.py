@@ -1160,7 +1160,7 @@ class AggregatorGUI(tk.Tk):
 
                 arena_dir = resolve_arena_dir(output_dir, arena_name)
                 arena_path = arena_dir / "arena.txt"
-                structure_path = arena_dir / "structure.txt"
+                structure_path = output_dir / "structure.txt"
                 compare_path = arena_dir / f"compare.{output_format}"
 
                 # Writable checks (fail fast)
