@@ -1,15 +1,17 @@
 ---
 name: arena-context
-description: Curates and writes high-signal project context for LMArena. Trigger on bug reports, runtime/build errors, feature requests, or stack traces. Outputs to .context/inputs/<name>.txt (primary) or files.txt (fallback) following prompt.txt specifications.
+description: Curates and writes high-signal project context for LMArena. Trigger on bug reports, runtime/build errors, feature requests, or stack traces. The agent must automatically write input .txt files with path listings to .context/inputs/<name>.txt (the primary directory scanned by the aggregator) or files.txt (fallback).
 license: MIT
 metadata:
   author: fote
-  version: "2.3.0"
+  version: "2.4.0"
 
 ---
 # Arena Context
 
-Curates the minimum sufficient local context that LMArena needs to understand a coding problem by writing file paths and comments into `.context/inputs/<descriptive-name>.txt` (primary) or `./files.txt` (fallback) in the project root. Also provides Extra Context in chat for runtime or dependency issues that cannot be captured as file paths.
+Curates the minimum sufficient local context that LMArena needs to understand a coding problem by writing file paths and comments into `.context/inputs/<descriptive-name>.txt` (primary) or `./files.txt` (fallback) in the project root. The agent **must automatically use** `.context/inputs/` to store these path-listing `.txt` files, as the aggregator tool automatically scans and processes all files in this directory to generate isolated, numbered arenas.
+
+Also provides Extra Context in chat for runtime or dependency issues that cannot be captured as file paths.
 
 Prepares context for Blind Pairwise Comparisons and Arena Expert prompts on LMArena, where multiple models are evaluated head-to-head.
 
@@ -21,7 +23,7 @@ Prepares context for Blind Pairwise Comparisons and Arena Expert prompts on LMAr
 ## Inputs
 | Item | Path / Location |
 |---|---|
-| Target list to write (overwrite) | Primary: `.context/inputs/<descriptive-name>.txt` · Fallback: `./files.txt` in project root |
+| Target list to write (overwrite) | **Mandatory/Primary:** `.context/inputs/<descriptive-name>.txt` (must automatically use this directory) · **Fallback:** `./files.txt` in project root |
 | Config directory | `.context/` containing `settings.json` and `ignore` |
 | Aggregator script (do NOT run) | Linux/WSL: `/mnt/data/programming/Python/Projects/context/aggregator.py` · Windows: `C:/programming/Python/Projects/context/aggregator.py` |
 | Models directory | `context_output/models/` containing `prompt.txt`, model responses (`A.txt`, `B.txt`, etc.), and notes |
@@ -33,7 +35,7 @@ Prepares context for Blind Pairwise Comparisons and Arena Expert prompts on LMAr
 3. **TRACE** — Follow imports and type references outward, one level deep unless deeper files are clearly implicated.
 4. **ESTIMATE** — Gauge total line count (count lines for full files; `end - start + 1` for snippets). Target ≤ 4500 lines.
 5. **CLASSIFY** — For each file: full file, code snippet (range), or important structure (`!` prefix).
-6. **WRITE** — Overwrite/create `.context/inputs/<descriptive-name>.txt` (where `<descriptive-name>` is derived from the user's prompt, e.g., `fix-navbar-bug.txt`). If `.context/inputs/` is not available, write to `./files.txt`.
+6. **WRITE** — **Auto-use `.context/inputs/` directory:** Overwrite/create `.context/inputs/<descriptive-name>.txt` (where `<descriptive-name>` is derived from the user's prompt, e.g., `fix-navbar-bug.txt`). Only write to the fallback `./files.txt` if `.context/inputs/` is completely inaccessible.
 7. **REPORT** — Reply with the report format below.
 
 ### File Selection (expanding rings from the problem epicenter)
@@ -182,6 +184,7 @@ C:/proj/src/services/orders.ts:1-30,200-220
 Adding the entire 800-line `orders.ts` wastes budget on irrelevant code. Use line-range snippets to focus on the implicated function and its type context.
 
 ## Scope Boundaries
+- **Automatic Target Directory Selection:** Always default to writing input files in the `.context/inputs/` directory. Do not write to root `files.txt` unless the `.context/inputs/` folder cannot be used.
 - Write only to `.context/inputs/<descriptive-name>.txt` (or `./files.txt` as fallback) in the project root — leave application code, configs, and dependencies untouched so the user's codebase remains stable.
 - Focus on selecting context rather than proposing fixes or implementing changes — LMArena's models handle the solution.
 - The user runs `aggregator.py` themselves; the skill's job ends after writing the input file and providing the report.

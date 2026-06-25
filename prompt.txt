@@ -24,9 +24,29 @@ Token counting using tiktoken.
 <file path="core/judge.py">
 Gemini AI judge integration. build_compare_markdown() accepts compact flag. collect_model_responses() reads from models/ dir.
 </file>
+
+<file path="gui/browser-extension/">
+Browser Extension for automated workflow management:
+- Automatic .env file creation with GEMINI_API_KEY
+- Local server integration with real-time browser control
+- Interactive folder selection interface for answer storage
+- Direct code pasting buttons and text areas
+- Full tool control from browser interface
+- Environment variable setup and validation
+- Cross-platform compatibility across Chrome, Firefox, Safari
+- Integration with web-based IDEs (GitHub Codespaces, GitHub web UI)
+</file>
+
+<file path="gui/vscode-extension/">
+Legacy VS Code extension for backward compatibility:
+- Automatic .env file creation with GEMINI_API_KEY
+- Folder selection interface for answer storage
+- Direct code pasting buttons
+- Limited tool control from VS Code
+- Environment variable setup and validation
+</file>
 </current_code>
 
-<requirements>
 <requirement id="1" priority="high">
 OUTPUT ORGANIZATION: Create a dedicated output folder (context_output/) instead of dumping files in the current working directory (CWD). All generated files (e.g. arena.txt, structure.txt, compare.md, and their multi-file equivalents) must be written inside this folder. The output folder path must be configurable via the --output flag.
 </requirement>
@@ -34,6 +54,25 @@ OUTPUT ORGANIZATION: Create a dedicated output folder (context_output/) instead 
 <requirement id="2" priority="high">
 MULTI-FILE SUPPORT: Automatically discover and process ALL files*.txt files in the CWD matching the pattern files.txt and files_*.txt (e.g. files.txt, files_1.txt, files_02.txt). Each discovered input file must produce its own set of arena/structure/compare outputs with a matching suffix inside the output folder (e.g. files_1.txt produces context_output/arena_1.txt, context_output/structure_1.txt, and context_output/compare_1.md).
 </requirement>
+
+<requirement id="8" priority="high">
+BROWSER EXTENSION & SERVER CAPABILITY: Implement a comprehensive solution for automated workflow management that includes:
+- **Browser Extension**: Create a complete browser extension that runs the tool with full automation and control across all web-based environments
+- **Automatic .env Setup**: Automatically create .env files with required API keys (especially GEMINI_API_KEY) for authentication
+- **Local Server Integration**: Launch a local server accessible from any terminal or web-based IDE
+- **Real-time Browser Control**: Provide browser-based interface for full tool control using browser technologies (React/Vue/Angular components)
+- **Intelligent Answer Organization**: Implement automatic folder structure for storing answers with intelligent naming and categorization
+- **Direct Code Pasting**: Enable multi-source code input from clipboard, drag-and-drop, and direct text areas
+- **Interactive Folder Selection**: Seamlessly select answer storage locations using native OS file pickers
+- **Cross-Platform Support**: Work across Windows, macOS, Linux, and cloud IDEs (GitHub Codespaces, GitPod, etc.)
+</requirement>
+
+<requirement id="9" priority="medium">
+WINDOWS ENVIRONMENT SETUP: Automatically configure Windows environments to support this workflow:
+- Set up environment variables for tool execution from any terminal
+- Create auto-detection mechanisms for project root and configuration
+- Provide seamless local server integration across different working directories
+- Ensure cross-platform compatibility for all features
 
 <requirement id="3" priority="medium">
 FLEXIBLE files.txt FORMAT WITH WARNINGS: Support free text and comment lines before and after file path entries.

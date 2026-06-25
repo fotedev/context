@@ -130,6 +130,10 @@ def ensure_context_dir(root: Path) -> Path:
         )
         print(f"Created {ignore_path}")
 
+    # Auto-create inputs directory if missing
+    inputs_dir = context_dir / "inputs"
+    inputs_dir.mkdir(parents=True, exist_ok=True)
+
     return context_dir
 
 
@@ -156,12 +160,9 @@ def load_settings(root: Path) -> dict[str, object]:
         A settings dictionary guaranteed to contain every key from
         ``DEFAULT_SETTINGS``.
     """
+    # Ensure the configuration directory and files exist (including .context/inputs)
+    _ = ensure_context_dir(root)
     settings_path = root / ".context" / "settings.json"
-
-    # Ensure the file exists
-    if not settings_path.is_file():
-        _ = ensure_context_dir(root)
-        return dict(DEFAULT_SETTINGS)
 
     try:
         content = settings_path.read_text(encoding="utf-8").strip()
