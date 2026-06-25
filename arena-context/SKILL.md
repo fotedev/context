@@ -1,10 +1,10 @@
 ---
 name: arena-context
-description: Curates and writes high-signal project context for LMArena. Trigger on bug reports, runtime/build errors, feature requests, or stack traces. The agent must automatically write input .txt files with path listings to .context/inputs/<name>.txt (the primary directory scanned by the aggregator) or files.txt (fallback).
+description: Curates and writes high-signal project context for LMArena. Trigger on bug reports, runtime/build errors, feature requests, or stack traces. The agent must automatically write input path-listing .txt files to .context/inputs/<name>.txt. Do not write to project root files.txt or arena-prompt.md.
 license: MIT
 metadata:
   author: fote
-  version: "2.4.0"
+  version: "2.5.0"
 
 ---
 # Arena Context
@@ -23,7 +23,7 @@ Prepares context for Blind Pairwise Comparisons and Arena Expert prompts on LMAr
 ## Inputs
 | Item | Path / Location |
 |---|---|
-| Target list to write (overwrite) | **Mandatory/Primary:** `.context/inputs/<descriptive-name>.txt` (must automatically use this directory) · **Fallback:** `./files.txt` in project root |
+| Target list to write (overwrite) | **Mandatory:** `.context/inputs/<descriptive-name>.txt` (The agent MUST create this file/folder. Do not write to root `files.txt` or `arena-prompt.md`) |
 | Config directory | `.context/` containing `settings.json` and `ignore` |
 | Aggregator script (do NOT run) | Linux/WSL: `/mnt/data/programming/Python/Projects/context/aggregator.py` · Windows: `C:/programming/Python/Projects/context/aggregator.py` |
 | Models directory | `context_output/models/` containing `prompt.txt`, model responses (`A.txt`, `B.txt`, etc.), and notes |
@@ -35,7 +35,10 @@ Prepares context for Blind Pairwise Comparisons and Arena Expert prompts on LMAr
 3. **TRACE** — Follow imports and type references outward, one level deep unless deeper files are clearly implicated.
 4. **ESTIMATE** — Gauge total line count (count lines for full files; `end - start + 1` for snippets). Target ≤ 4500 lines.
 5. **CLASSIFY** — For each file: full file, code snippet (range), or important structure (`!` prefix).
-6. **WRITE** — **Auto-use `.context/inputs/` directory:** Overwrite/create `.context/inputs/<descriptive-name>.txt` (where `<descriptive-name>` is derived from the user's prompt, e.g., `fix-navbar-bug.txt`). Only write to the fallback `./files.txt` if `.context/inputs/` is completely inaccessible.
+6. **WRITE** — **Mandatory target location:** Overwrite/create `.context/inputs/<descriptive-name>.txt` (where `<descriptive-name>` is derived from the user's prompt, e.g., `fix-navbar-bug.txt`).
+   - *Directory Creation:* The agent MUST automatically create the `.context/inputs/` directory if it does not exist (using standard file writing tools which automatically handle parent folder creation).
+   - *No Root Files:* Do NOT write to root `files.txt` and do NOT create prompt files (like `arena-prompt.md`) in the project root.
+   - *Prompt Placement:* If generating a prompt for LMArena models, write it directly to `.context/inputs/<descriptive-name>_prompt.txt` or `context_output/arenas/NNN-<descriptive-name>/answers/prompt.txt`.
 7. **REPORT** — Reply with the report format below.
 
 ### File Selection (expanding rings from the problem epicenter)
@@ -88,7 +91,7 @@ C:/proj/src/layouts/MainLayout.tsx:45-80
 This way the input file is self-documenting — anyone reading it knows what problem it addresses.
 
 ### Report Format
-After writing `.context/inputs/<descriptive-name>.txt` (or `./files.txt`), always reply with:
+After writing `.context/inputs/<descriptive-name>.txt`, always reply with:
 ✅ **.context/inputs/<descriptive-name>.txt updated** — [N] files, [S] snippets, [I] structures selected for [problem summary]
 
 **Arena output:** `context_output/arenas/NNN-<descriptive-name>/` (where NNN is auto-incremented)
@@ -184,8 +187,9 @@ C:/proj/src/services/orders.ts:1-30,200-220
 Adding the entire 800-line `orders.ts` wastes budget on irrelevant code. Use line-range snippets to focus on the implicated function and its type context.
 
 ## Scope Boundaries
-- **Automatic Target Directory Selection:** Always default to writing input files in the `.context/inputs/` directory. Do not write to root `files.txt` unless the `.context/inputs/` folder cannot be used.
-- Write only to `.context/inputs/<descriptive-name>.txt` (or `./files.txt` as fallback) in the project root — leave application code, configs, and dependencies untouched so the user's codebase remains stable.
+- **Strict Target Directory Selection:** Always write input `.txt` files containing paths to `.context/inputs/<descriptive-name>.txt`. Never create files like `files.txt` or `arena-prompt.md` in the project root.
+- **Prompt Placement:** Always place generated prompts in `context_output/arenas/NNN-<descriptive-name>/answers/prompt.txt` or `.context/inputs/<descriptive-name>_prompt.txt` to keep the project root clean.
+- Write only to `.context/inputs/` — leave application code, configs, and dependencies untouched so the user's codebase remains stable.
 - Focus on selecting context rather than proposing fixes or implementing changes — LMArena's models handle the solution.
 - The user runs `aggregator.py` themselves; the skill's job ends after writing the input file and providing the report.
 
