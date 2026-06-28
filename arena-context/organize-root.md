@@ -11,6 +11,20 @@ This instruction set is a mini-skill for the AI agent to organize root-level fil
 | `./models/` (entire directory) | `context_output/models/` | Model responses and legacy archives |
 | `./models/ARCHIVE/` | `context_output/models/ARCHIVE/` | Timestamped archive history |
 
+### Category Organization (NEW)
+You can organize input files into subdirectories within `.context/inputs/` for better organization:
+```
+.context/inputs/
+├── UI/
+│   ├── AdminPage.txt        # ← Found as "UI-AdminPage"
+│   └── HomePage.txt         # ← Found as "UI-HomePage"
+├── API/
+│   └── UserAuth.txt         # ← Found as "API-UserAuth"
+└── Common/
+    └── Types.txt            # ← Found as "Common-Types"
+```
+The tool automatically discovers all `.txt` files in subdirectories and uses the directory structure as part of the arena naming.
+
 ## Agent Instructions
 
 When you detect legacy files in the project root, perform the following steps:

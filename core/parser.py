@@ -906,9 +906,18 @@ def discover_files_txt(
         inputs_dir = root / inputs_dir_str
         
         if inputs_dir.is_dir():
-            for p in sorted(inputs_dir.glob("*.txt")):
+            # Use rglob to recursively scan all subdirectories for *.txt files
+            for p in sorted(inputs_dir.rglob("*.txt")):
                 if p.is_file():
-                    arena_name = p.stem
+                    try:
+                        rel_path = p.relative_to(inputs_dir)
+                        # Build a flat arena name: e.g. UI/AdminPage.txt -> UI-AdminPage
+                        parts = list(rel_path.parent.parts) + [rel_path.stem]
+                        # Filter out empty or '.' parts to handle files at the root of inputs_dir
+                        parts = [part for part in parts if part and part != '.']
+                        arena_name = "-".join(parts)
+                    except ValueError:
+                        arena_name = p.stem
                     results.append((p, arena_name))
             if results:
                 return results

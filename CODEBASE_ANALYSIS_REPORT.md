@@ -12,7 +12,7 @@
 | Dimension | Score | Assessment |
 |-----------|-------|------------|
 | Prompt Compliance | 96% | All 11 requirements implemented; minor enhancements in Req 4 & 10 |
-| Edge Case Coverage | 100% | 11/11 edge cases fully handled |
+| Edge Case Coverage | 100% | 12/12 edge cases fully handled (including nested subdirectory discovery) |
 | Skills Quality | 92/100 | Well-structured; minor doc alignment gaps |
 | Code Quality | 88/100 | Clean core architecture; TUI coupling and file size concerns |
 | Feature Completeness | 95/100 | Full parity across CLI/TUI/GUI for core features |
@@ -27,7 +27,7 @@
 
 | Metric | Value |
 |--------|-------|
-| Total Python Lines | ~4,559 |
+| Total Python Lines | ~4,619 |
 | Core Modules | 3 (parser.py, judge.py, counter.py) |
 | Entry Points | 3 (CLI, TUI, GUI) |
 | External Dependencies | 0 required, 2 optional (tiktoken, textual) |
@@ -42,7 +42,7 @@
 
 | File | Lines | Size | Purpose |
 |------|-------|------|---------|
-| core/parser.py | 1,086 | ~45KB | Foundation: file I/O, paths, settings, tree, migration |
+| core/parser.py | 1,146 | ~48KB | Foundation: file I/O, paths, settings, tree, migration, recursive discovery |
 | core/judge.py | 693 | ~30KB | Gemini API, compare generation, archiving |
 | core/counter.py | 37 | ~1KB | Token counting (tiktoken + fallback) |
 | aggregator.py | 558 | ~23KB | CLI entry point, argparse, orchestration |
@@ -106,14 +106,16 @@
 - Prints "Created empty C.txt, D.txt. Please paste their responses." (line 689-691)
 
 ### Requirement 8: INPUT ORGANIZATION — `.context/inputs/` discovery
-**Status: ✅ FULLY IMPLEMENTED**
-- `discover_files_txt()` at `parser.py:843-875`:
-  - Primary: `.context/inputs/*.txt` (lines 853-863)
-  - Fallback: CWD `files.txt` and `files_*.txt` (lines 865-875)
-- Arena subfolder structure: `context_output/arenas/NNN-<name>/` via `resolve_arena_dir()` at lines 883-913
+**Status: ✅ FULLY IMPLEMENTED (with recursive discovery enhancement)**
+- `discover_files_txt()` at `parser.py:894-935`:
+  - Primary: `.context/inputs/**/*.txt` (recursive discovery using `rglob`)
+  - Fallback: CWD `files.txt` and `files_*.txt` (lines 925-935)
+- Arena subfolder structure: `context_output/arenas/NNN-<name>/` via `resolve_arena_dir()` at lines 943-973
 - Arena naming: 3-digit zero-padded auto-increment (e.g., `001-fix-navbar-bug/`)
-- Re-running same name reuses existing arena (line 907-908)
+- Re-running same name reuses existing arena (line 967-968)
 - `.context/inputs/` and `context_output/arenas/` added to ignore patterns via `_DEFAULT_IGNORE` (lines 68-69)
+- **Recursive discovery enhancement**: `rglob("*.txt")` at line 910 scans all subdirectories
+- **Category-based naming**: Files in subdirectories get category prefix (e.g., `UI/AdminPage.txt` → `001-UI-AdminPage/`)
 
 ### Requirement 9: MERGED CONFIGURATION DIRECTORY
 **Status: ✅ FULLY IMPLEMENTED**
@@ -164,6 +166,7 @@
 | EC9: .context/inputs/ missing | ✅ | `parser.py:865-875` | Falls back to CWD files.txt |
 | EC10: CWD files.txt on first run | ✅ | No auto-migration | Agent runs organize-root skill |
 | EC11: Root models/ archives | ✅ | `parser.py:1059-1078` | Moves entire tree to output_dir/models/ |
+| EC12: Nested subdirectories in inputs | ✅ | `parser.py:910` | Auto-discovers recursively, flattens to category-name format |
 
 ---
 

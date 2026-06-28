@@ -90,11 +90,26 @@ C:/proj/src/layouts/MainLayout.tsx:45-80
 ```
 This way the input file is self-documenting — anyone reading it knows what problem it addresses.
 
+### Category Organization (NEW)
+You can organize input files into subdirectories within `.context/inputs/` for better organization:
+```
+.context/inputs/
+├── UI/
+│   ├── AdminPage.txt        # ← Found as "UI-AdminPage"
+│   └── HomePage.txt         # ← Found as "UI-HomePage"
+├── API/
+│   └── UserAuth.txt         # ← Found as "API-UserAuth"
+└── Common/
+    └── Types.txt            # ← Found as "Common-Types"
+```
+The tool automatically discovers all `.txt` files in subdirectories and uses the directory structure as part of the arena naming (e.g., `UI/AdminPage.txt` → `001-UI-AdminPage/`).
+
 ### Report Format
 After writing `.context/inputs/<descriptive-name>.txt`, always reply with:
 ✅ **.context/inputs/<descriptive-name>.txt updated** — [N] files, [S] snippets, [I] structures selected for [problem summary]
 
 **Arena output:** `context_output/arenas/NNN-<descriptive-name>/` (where NNN is auto-incremented)
+- For files in subdirectories: `context_output/arenas/NNN-<category>-<name>/` (e.g., `001-UI-AdminPage/`)
 - `arena.txt` — aggregated source code
 - `structure.txt` — project tree
 - `compare.md` — model comparison template

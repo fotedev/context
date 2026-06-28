@@ -10,21 +10,28 @@ project/
 │   ├── settings.json          # persistent preferences
 │   ├── ignore                 # user-defined ignore patterns
 │   └── inputs/                # input manifests (primary discovery location)
-│       ├── fix-navbar-bug.txt # agent-created input files
-│       └── refactor-api.txt
+│       ├── UI/                # ← Category subdirectory (new feature)
+│       │   ├── AdminPage.txt  # ← Found as "UI-AdminPage"
+│       │   └── HomePage.txt   # ← Found as "UI-HomePage"
+│       ├── API/               # ← Another category subdirectory
+│       │   └── UserAuth.txt   # ← Found as "API-UserAuth"
+│       ├── Common/            # ← Common category
+│       │   └── Types.txt      # ← Found as "Common-Types"
+│       └── fix-navbar-bug.txt # Compatible flat structure
 ├── context_output/            # all generated outputs
 │   ├── arenas/                # per-input arena folders (auto-numbered)
-│   │   ├── 001-fix-navbar-bug/
+│   │   ├── 001-UI-AdminPage/  # ← Arena with category name
 │   │   │   ├── arena.txt      # aggregated code
 │   │   │   ├── structure.txt  # project tree
 │   │   │   ├── compare.md     # model comparison (or .txt)
 │   │   │   └── answers/       # model responses + prompt
 │   │   │       ├── prompt.txt
 │   │   │       ├── A.txt
-│   │   │       ├── B.txt
+│   │   │       └── B.txt
 │   │   │       └── ARCHIVE/   # archived responses
-│   │   └── 002-refactor-api/
-│   │       └── ...
+│   │   ├── 002-UI-HomePage/
+│   │   ├── 003-API-UserAuth/
+│   │   └── 004-Common-Types/
 │   └── models/                # legacy models directory (migrated from root)
 │       ├── A.txt
 │       ├── B.txt
@@ -50,6 +57,26 @@ $ python aggregator.py
 → Reads settings.json → uses defaults
 → Processes files.txt
 → Outputs to context_output/
+```
+
+### Scenario 1b: Recursive Input Discovery (NEW)
+
+```
+.context/inputs/
+├── UI/
+│   ├── AdminPage.txt        # ← Found as "UI-AdminPage"
+│   └── HomePage.txt         # ← Found as "UI-HomePage"
+├── API/
+│   └── UserAuth.txt         # ← Found as "API-UserAuth"
+└── Common/
+    └── Types.txt            # ← Found as "Common-Types"
+
+→ Automatically discovers all .txt files in subdirectories
+→ Each file generates a unique Arena with category prefix:
+  001-UI-AdminPage/
+  002-UI-HomePage/
+  003-API-UserAuth/
+  004-Common-Types/
 ```
 
 ### Scenario 2: Normal Run (settings exist)
@@ -89,7 +116,7 @@ C:/proj/src/layouts/MainLayout.tsx:45-80
    - C:/proj/src/components/Navbar.module.css (full file)
    - C:/proj/src/layouts/MainLayout.tsx:45-80 (snippet)
 → Comments/notes are ignored, tool works normally
-→ Users can write自由 text without breaking anything
+→ Users can write free text without breaking anything
 ```
 
 ### Scenario 3: Interactive Run (--interactive flag)
@@ -148,6 +175,28 @@ $ python aggregator.py --output my_folder
 → settings.json "output_dir" is overridden by flag
 ```
 
+### Scenario 6b: Web Server Interface
+
+```bash
+# Enhanced web interface with local server
+$ web-svr
+
+→ Launches a local web server on http://localhost:5000
+→ Opens in browser automatically
+→ Provides interactive folder selection for answer storage
+→ Features direct code pasting buttons and text areas
+→ Full tool control from browser interface
+→ Supports cross-platform development workflows
+```
+
+**Web Server Features:**
+- **Automatic .env setup**: Creates configuration with GEMINI_API_KEY
+- **Interactive folder selection**: Browse and select answer storage location
+- **Direct code pasting**: Multiple input methods (clipboard, drag-drop, text areas)
+- **Real-time control**: Live tool execution and monitoring
+- **Cross-platform support**: Works on Windows, macOS, Linux, and cloud IDEs
+- **Responsive design**: Optimized for desktop and mobile browsers
+
 ### Scenario 7: Notes Auto-Merge
 
 ```
@@ -205,6 +254,7 @@ $ python aggregator.py
 | `compact_mode` | `false` | `true` / `false` |
 | `archive` | `false` | `true` / `false` |
 | `archive_dir` | `"models/ARCHIVE"` | any folder name |
+| `inputs_dir` | `".context/inputs"` | any folder name |
 
 ## Ignore Patterns
 
@@ -234,6 +284,7 @@ $ python aggregator.py
 | Gemini API key not set | Warn and skip judge (don't error) |
 | Notes extension mismatch | Only match chosen output extension |
 | Old files in CWD | Warn: "Clean? [Enter=clean, Space=skip]" |
+| Nested subdirectories in inputs | Auto-discover recursively, flatten to category-name format |
 
 ## Project Root Detection
 
