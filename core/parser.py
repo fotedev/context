@@ -1,16 +1,45 @@
-"""Core parser module for the File Aggregator tool.
-Handles file parsing, path resolution, tree generation, ignore patterns,
-settings management, output directory resolution, and multi-file discovery.
+"""Slimmed core parser — path parsing, aggregation, tree, output migration.
+
+After the Phase-#2 refactor (see ``REFACTOR_AND_STATUS_PLAN.md``), this module
+keeps only the concerns that don't belong in the new ``core.settings``,
+``core.arena``, or ``core.discovery`` modules. It also re-exports the public
+names those modules now own so the four legacy caller files
+(``aggregator.py``, ``aggregator_gui.py``, ``aggregator_tui.py``,
+``renumber_arenas.py``) keep working without any import changes.
 """
 from __future__ import annotations
 
-import sys
-import fnmatch
-import functools
-import json
 import re
+import shutil
+import sys
 from pathlib import Path
-from typing import cast, Iterator
+from typing import Iterator
+
+# Re-export from the new focused modules. These names exist precisely so
+# `from core.parser import X` continues to work for every caller — do not
+# delete any of them even if they appear "unused" inside this file.
+from core.settings import (  # noqa: F401  (re-export)
+    DEFAULT_SETTINGS,
+    display_settings,
+    ensure_context_dir,
+    load_settings,
+    save_settings,
+    sync_paste_attachments,
+)
+from core.discovery import (  # noqa: F401  (re-export)
+    discover_files_txt,
+    discover_files_txt_with_directives,
+    get_latest_state,
+    load_ignore_patterns,
+    should_ignore,
+    write_state_breadcrumb,
+)
+from core.arena import (  # noqa: F401  (re-export)
+    ArenaAssignment,
+    ArenaDirective,
+    build_arena_plan,
+    resolve_arena_dir,
+)
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -19,297 +48,7 @@ from typing import cast, Iterator
 _ROOT_MARKERS: frozenset[str] = frozenset(
     {"package.json", ".git", "requirements.txt", "pyproject.toml", "src"}
 )
-_DEFAULT_IGNORE: frozenset[str] = frozenset(
-    {
-        ".git",
-        "node_modules",
-        "dist",
-        "build",
-        ".windsurf",
-        ".agents",
-        ".speckit",
-        ".specify",
-        "venv",
-        ".vercel",
-        ".cursor",
-        ".vscode",
-        ".github",
-        "compare_4.txt",
-        "compare-template.bak",
-        "compare_of_compare.txt",
-        "scripts",
-        "migrations.old",
-        "__pycache__",
-        ".next",
-        ".venv",
-        ".index_ignore",
-        "*.pyc",
-        ".DS_Store",
-        "files.txt",
-        "arena.txt",
-        "structure.txt",
-        "llm.txt",
-        "compare.md",
-        "compare.txt",
-        "compare_*.md",
-        "compare_*.txt",
-        "files_*.txt",
-        "arena_*.txt",
-        "structure_*.txt",
-        "models",
-        ".pnpm-store",
-        "desktop.ini",
-        "models/old",
-        "get-shit-done",
-        "gifts",
-        "agents",
-        ".agent",
-        # Output and configuration directories (Req 1, Req 8)
-        "context_output",
-        ".context",
-    }
-)
 _MAX_TREE_DEPTH: int = 20
-
-# ---------------------------------------------------------------------------
-# Default settings schema (Req 9)
-# ---------------------------------------------------------------------------
-
-DEFAULT_SETTINGS: dict[str, object] = {
-    "output_dir": "context_output",
-    "output_format": "md",
-    "model_count": 2,
-    "gemini_judge": False,
-    "compact_mode": False,
-    "archive": False,
-    "archive_dir": "ARCHIVE",
-    "inputs_dir": ".context/inputs",
-}
-
-# Template written to .context/ignore when auto-created (Req 8)
-_DEFAULT_IGNORE_TEMPLATE = """\
-# Context Tool — Ignore Patterns
-# One pattern per line.  # Comments and blank lines are ignored.
-# Edit this file to add or remove patterns. The tool ignores ONLY the patterns listed here.
-
-# Version control
-.git
-
-# Dependency directories
-node_modules
-venv
-.venv
-.pnpm-store
-
-# Editor & IDE files
-.vscode
-.idea
-.cursor
-.windsurf
-.github
-.agent
-.agents
-.speckit
-.specify
-desktop.ini
-.DS_Store
-
-# Temporary, cache, and build files
-__pycache__
-*.pyc
-dist
-build
-.next
-.vercel
-.index_ignore
-compare-template.bak
-compare_4.txt
-compare_of_compare.txt
-migrations.old
-
-# Tool inputs, outputs, and scripts
-context_output
-.context
-files.txt
-arena.txt
-structure.txt
-llm.txt
-compare.md
-compare.txt
-compare_*.md
-compare_*.txt
-files_*.txt
-arena_*.txt
-structure_*.txt
-models
-models/old
-get-shit-done
-gifts
-agents
-scripts
-"""
-
-# ---------------------------------------------------------------------------
-# Configuration directory management (Req 8)
-# ---------------------------------------------------------------------------
-
-
-def ensure_context_dir(root: Path) -> Path:
-    """Ensure the ``.context/`` directory exists with default config files.
-
-    Creates ``.context/``, ``.context/settings.json``, and ``.context/ignore``
-    if they are missing.  Existing files are never overwritten.
-
-    Args:
-        root: Project root directory.
-
-    Returns:
-        Path to the ``.context/`` directory.
-    """
-    context_dir = root / ".context"
-    context_dir.mkdir(parents=True, exist_ok=True)
-
-    # Auto-create settings.json if missing
-    settings_path = context_dir / "settings.json"
-    if not settings_path.is_file():
-        save_settings(root, dict(DEFAULT_SETTINGS))
-        print(
-            f"Created {settings_path} — edit your preferences or delete to reset."
-        )
-
-    # Auto-create ignore file if missing or update if it contains the legacy template description
-    ignore_path = context_dir / "ignore"
-    should_write = False
-    if not ignore_path.is_file():
-        should_write = True
-    else:
-        try:
-            content = ignore_path.read_text(encoding="utf-8")
-            if "These patterns are ADDITIONAL to the built-in defaults" in content:
-                should_write = True
-        except OSError:
-            pass
-
-    if should_write:
-        _ = ignore_path.write_text(
-            _DEFAULT_IGNORE_TEMPLATE, encoding="utf-8"
-        )
-        print(f"Created/Updated {ignore_path} with default ignore patterns.")
-
-    # Auto-create inputs directory if missing
-    inputs_dir = context_dir / "inputs"
-    inputs_dir.mkdir(parents=True, exist_ok=True)
-
-    return context_dir
-
-
-# ---------------------------------------------------------------------------
-# Settings management (Req 9, Req 10)
-# ---------------------------------------------------------------------------
-
-
-def load_settings(root: Path) -> dict[str, object]:
-    """Load settings from ``.context/settings.json``, falling back to defaults.
-
-    Resolution strategy (Req 4 precedence — settings layer):
-    * If the file is missing → auto-create with defaults and return them.
-    * If the file is empty → print a hint and return defaults (Edge case 2).
-    * If the file contains invalid JSON → print a warning every run and
-      return defaults (Edge case 2).
-    * Otherwise, merge user values on top of ``DEFAULT_SETTINGS`` so that
-      new keys introduced in future versions are always present.
-
-    Args:
-        root: Project root directory containing ``.context/``.
-
-    Returns:
-        A settings dictionary guaranteed to contain every key from
-        ``DEFAULT_SETTINGS``.
-    """
-    # Ensure the configuration directory and files exist (including .context/inputs)
-    _ = ensure_context_dir(root)
-    settings_path = root / ".context" / "settings.json"
-
-    try:
-        content = settings_path.read_text(encoding="utf-8").strip()
-
-        # Edge case 2: completely empty file
-        if not content:
-            print(
-                "Use context skill with AI model to initialize preferences.",
-                file=sys.stderr,
-            )
-            return dict(DEFAULT_SETTINGS)
-
-        user_settings = cast(dict[str, object], json.loads(content))
-
-        # Merge: user values override defaults, new keys get defaults
-        merged = dict(DEFAULT_SETTINGS)
-        merged.update(user_settings)
-        return merged
-
-    except json.JSONDecodeError:
-        # Edge case 2: invalid JSON — warn every run
-        print(
-            "Warning: Invalid .context/settings.json — using defaults.",
-            file=sys.stderr,
-        )
-        return dict(DEFAULT_SETTINGS)
-
-    except OSError as exc:
-        print(
-            f"Warning: Could not read .context/settings.json ({exc}) — using defaults.",
-            file=sys.stderr,
-        )
-        return dict(DEFAULT_SETTINGS)
-
-
-def save_settings(root: Path, settings: dict[str, object]) -> None:
-    """Persist *settings* to ``.context/settings.json``.
-
-    The ``.context/`` directory is created if necessary.
-
-    Args:
-        root: Project root directory.
-        settings: Complete settings dictionary to write.
-    """
-    context_dir = root / ".context"
-    context_dir.mkdir(parents=True, exist_ok=True)
-    settings_path = context_dir / "settings.json"
-    with settings_path.open("w", encoding="utf-8") as fh:
-        json.dump(settings, fh, indent=2)
-        _ = fh.write("\n")
-
-
-def display_settings(root: Path) -> None:
-    """Print the active settings path, current content, and help text.
-
-    Used by the ``--settings`` CLI flag (Req 10).
-    """
-    context_dir = root / ".context"
-    settings_path = context_dir / "settings.json"
-
-    print(f"Settings file: {settings_path}")
-    print()
-
-    if settings_path.is_file():
-        try:
-            content = settings_path.read_text(encoding="utf-8")
-            print("Current settings:")
-            print(content)
-        except OSError as exc:
-            print(f"Error reading settings: {exc}", file=sys.stderr)
-    else:
-        print("No settings file found. It will be auto-created on next run.")
-
-    print()
-    print(
-        "To edit settings, modify the JSON file above or delete it to reset to defaults."
-    )
-    print()
-    print("Settings schema:")
-    print(json.dumps(DEFAULT_SETTINGS, indent=2))
-
 
 # ---------------------------------------------------------------------------
 # Environment initialization
@@ -419,102 +158,6 @@ def get_display_path(path: Path, root: Path | None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Ignore-pattern management (Req 8)
-# ---------------------------------------------------------------------------
-
-
-def load_ignore_patterns(root: Path | None) -> frozenset[str]:
-    """Load exclusion patterns from the .context/ignore file.
-
-    If ``.context/ignore`` does not exist, it is auto-created with a
-    default template via :func:`ensure_context_dir`.
-
-    Args:
-        root: Project root to search for config files.
-              Falls back to the current working directory when ``None``.
-
-    Returns:
-        Immutable set of glob patterns identifying paths to exclude.
-    """
-    patterns: set[str] = set()
-    search_dir = root if root is not None else Path.cwd()
-
-    # Ensure .context/ignore exists
-    _ = ensure_context_dir(search_dir)
-
-    # Read .context/ignore
-    context_ignore = search_dir / ".context" / "ignore"
-    if context_ignore.is_file():
-        patterns.update(_read_pattern_file(context_ignore))
-
-    return frozenset(patterns)
-
-
-def _read_pattern_file(path: Path) -> set[str]:
-    """Read ignore patterns from a text file, one per line.
-
-    Lines starting with ``#`` and blank lines are skipped.
-
-    Args:
-        path: Path to the pattern file.
-
-    Returns:
-        Set of non-empty, non-comment pattern strings.
-    """
-    patterns: set[str] = set()
-    try:
-        with path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                stripped = line.strip()
-                if stripped and not stripped.startswith("#"):
-                    patterns.add(stripped)
-    except OSError as exc:
-        print(f"Warning: Could not read {path}: {exc}", file=sys.stderr)
-    return patterns
-
-
-@functools.lru_cache(maxsize=16384)
-def _check_glob_match(path_str: str, patterns: frozenset[str]) -> bool:
-    """Cached glob matching to reduce O(N*P) regex recompilation overhead."""
-    return any(fnmatch.fnmatch(path_str, pat) for pat in patterns)
-
-
-def should_ignore(path: Path, root: Path, patterns: frozenset[str]) -> bool:
-    """Decide whether *path* matches any exclusion pattern.
-
-    Matching is performed against:
-    * The full POSIX relative path (e.g. ``src/utils/helper.py``).
-    * Each individual path component (e.g. ``src``, ``utils``, ``helper.py``).
-
-    Uses :func:`_check_glob_match` with LRU caching to avoid redundant
-    regex compilations across repeated calls with the same pattern set.
-
-    Args:
-        path: Path to evaluate.
-        root: Project root used to compute the relative path.
-        patterns: Compiled set of glob patterns.
-
-    Returns:
-        ``True`` if *path* should be excluded from processing.
-    """
-    try:
-        rel = path.relative_to(root)
-    except ValueError:
-        return False  # outside root — never auto-ignore
-
-    rel_posix = rel.as_posix()
-
-    if _check_glob_match(rel_posix, patterns):
-        return True
-
-    for part in rel.parts:
-        if _check_glob_match(part, patterns):
-            return True
-
-    return False
-
-
-# ---------------------------------------------------------------------------
 # Directory-tree generation
 # ---------------------------------------------------------------------------
 
@@ -542,6 +185,8 @@ def generate_tree(
     Returns:
         Lines forming the visual tree, without a trailing newline each.
     """
+    from core.counter import count_lines
+
     if _depth > _MAX_TREE_DEPTH:
         return [f"{prefix}... (max depth {_MAX_TREE_DEPTH} reached)"]
 
@@ -559,7 +204,11 @@ def generate_tree(
         is_last = index == len(items) - 1
         connector = "└── " if is_last else "├── "
         suffix = "/" if item.is_dir() else ""
-        tree.append(f"{prefix}{connector}{item.name}{suffix}")
+        if item.is_file():
+            line_count = count_lines(item)
+            tree.append(f"{prefix}{connector}{item.name} ({line_count} lines)")
+        else:
+            tree.append(f"{prefix}{connector}{item.name}{suffix}")
 
         if item.is_dir() and not item.is_symlink():
             child_prefix = prefix + ("    " if is_last else "│   ")
@@ -648,7 +297,7 @@ def parse_file_entry(
     Supported formats:
         /path/to/file.py              → (Path, None, False)
         /path/to/file.py:10-20        → (Path, [(10, 20)], False)
-        /path/to/file.py:5-10,25-30   → (Path, [(5, 10), (25, 30)], False)
+        /path/to/file.py:5-10,25-30   → (Path, [(5, 10), (30, 30)], False)
         !/path/to/file.py:1-5         → (Path, [(1, 5)], True)
 
     Args:
@@ -712,7 +361,7 @@ def read_file_entries(
         raise FileNotFoundError(f"Source paths file not found: {source_file}")
 
     entries: list[tuple[Path, list[tuple[int, int]] | None, bool]] = []
-    
+
     # Try reading with utf-8-sig (handles BOM), fall back to utf-16 if needed
     try:
         with source_file.open("r", encoding="utf-8-sig") as fh:
@@ -818,7 +467,7 @@ def read_file_paths(source_file: Path) -> list[Path]:
         raise FileNotFoundError(f"Source paths file not found: {source_file}")
 
     paths: list[Path] = []
-    
+
     try:
         with source_file.open("r", encoding="utf-8-sig") as fh:
             lines = fh.readlines()
@@ -838,7 +487,7 @@ def aggregate_files(
     entries: list[tuple[Path, list[tuple[int, int]] | None, bool]],
     output_file: Path,
     root: Path | None,
-) -> None:
+) -> int:
     """Write each file's contents (or snippets) to *output_file* with headers.
 
     Supports full files, line-range snippets, and "important" markers.
@@ -850,7 +499,12 @@ def aggregate_files(
         output_file: Destination file; created or truncated on open.
                      Parent directories are created automatically.
         root: Project root for :func:`get_display_path`, or ``None``.
+
+    Returns:
+        Total number of lines aggregated.
     """
+    from core.counter import count_lines
+
     # Ensure parent directory exists (Req 1 — output may be in a subfolder)
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -860,6 +514,8 @@ def aggregate_files(
         file=sys.stderr,
     )
 
+    total_lines = 0
+
     with output_file.open("w", encoding="utf-8") as out:
         for path, line_ranges, is_important in entries:
             if not path.is_file():
@@ -867,110 +523,32 @@ def aggregate_files(
                 continue
 
             display = get_display_path(path, root)
+            line_count = count_lines(path, line_ranges)
+            total_lines += line_count
 
             if line_ranges is None:
-                header = f"# --- FILE: {display} ---"
+                header = f"# --- FILE: {display} ({line_count} lines) ---"
             elif is_important:
                 range_str = ",".join(f"{s}-{e}" for s, e in line_ranges)
-                header = f"# --- IMPORTANT STRUCTURE: {display} [{range_str}] ---"
+                header = f"# --- IMPORTANT STRUCTURE: {display} [{range_str}] ({line_count} lines) ---"
             else:
                 range_str = ",".join(f"{s}-{e}" for s, e in line_ranges)
-                header = f"# --- SNIPPET: {display} [{range_str}] ---"
+                header = f"# --- SNIPPET: {display} [{range_str}] ({line_count} lines) ---"
 
             out.write(header + "\n")
-            
+
             for line in stream_file_content(path, line_ranges):
                 out.write(line)
-            
+
             # Ensure separation between files
             out.write("\n")
 
-
-# ---------------------------------------------------------------------------
-# Multi-file discovery (Req 2)
-# ---------------------------------------------------------------------------
-
-
-def discover_files_txt(
-    cwd: Path, root: Path | None = None, settings: dict[str, object] | None = None
-) -> list[tuple[Path, str]]:
-    """Discover input files and return (file_path, arena_name) tuples.
-    
-    Primary: root/.context/inputs/*.txt
-    Fallback: cwd/files.txt and cwd/files_*.txt
-    """
-    results: list[tuple[Path, str]] = []
-    
-    if root and settings:
-        inputs_dir_str = cast(str, settings.get("inputs_dir", ".context/inputs"))
-        inputs_dir = root / inputs_dir_str
-        
-        if inputs_dir.is_dir():
-            # Use rglob to recursively scan all subdirectories for *.txt files
-            for p in sorted(inputs_dir.rglob("*.txt")):
-                if p.is_file():
-                    try:
-                        rel_path = p.relative_to(inputs_dir)
-                        # Build a flat arena name: e.g. UI/AdminPage.txt -> UI-AdminPage
-                        parts = list(rel_path.parent.parts) + [rel_path.stem]
-                        # Filter out empty or '.' parts to handle files at the root of inputs_dir
-                        parts = [part for part in parts if part and part != '.']
-                        arena_name = "-".join(parts)
-                    except ValueError:
-                        arena_name = p.stem
-                    results.append((p, arena_name))
-            if results:
-                return results
-
-    # Fallback to CWD
-    main = cwd / "files.txt"
-    if main.is_file():
-        results.append((main, "files"))
-        
-    for p in sorted(cwd.glob("files_*.txt")):
-        if p.is_file():
-            suffix = p.name[len("files_") : -len(".txt")]
-            results.append((p, f"files_{suffix}"))
-            
-    return results
+    return total_lines
 
 
 # ---------------------------------------------------------------------------
 # Output directory resolution (Req 1)
 # ---------------------------------------------------------------------------
-
-
-def resolve_arena_dir(output_dir: Path, arena_name: str) -> Path:
-    """Resolve the NNN-<arena-name> directory inside context_output/arenas/.
-    
-    Reuses the highest sequence number for the same arena_name.
-    """
-    arenas_base = output_dir / "arenas"
-    arenas_base.mkdir(parents=True, exist_ok=True)
-    
-    max_all = 0
-    existing_match = None
-    max_match = 0
-    
-    for d in arenas_base.iterdir():
-        if d.is_dir() and "-" in d.name:
-            parts = d.name.split("-", 1)
-            if parts[0].isdigit():
-                num = int(parts[0])
-                if num > max_all:
-                    max_all = num
-                if parts[1] == arena_name:
-                    if num > max_match:
-                        max_match = num
-                        existing_match = d
-
-    if existing_match is not None:
-        return existing_match
-        
-    next_num = max_all + 1
-    next_dir = arenas_base / f"{next_num:03d}-{arena_name}"
-    next_dir.mkdir(parents=True, exist_ok=True)
-    return next_dir
 
 
 def resolve_output_dir(
@@ -1093,8 +671,6 @@ def migrate_old_outputs(root: Path, output_dir: Path) -> list[Path]:
     Returns:
         List of paths that were moved (empty if nothing was migrated).
     """
-    import shutil
-
     cwd = Path.cwd()
     moved: list[Path] = []
 
@@ -1143,4 +719,125 @@ def migrate_old_outputs(root: Path, output_dir: Path) -> list[Path]:
         )
         print(f"Migrated: {names} → {output_dir}/")
 
+    return moved
+
+
+# ---------------------------------------------------------------------------
+# Per-file folder migration (v2 layout: arena/arena.txt, compare/compare.md, ...)
+# ---------------------------------------------------------------------------
+
+# Active (non-archived) output files that should live in their own folder.
+# Each entry is (filename_pattern, target_subfolder).
+# Patterns use ``.suffix`` matching so both ``compare.md`` and ``compare.txt``
+# work without listing each.
+_PER_FILE_TARGETS: tuple[tuple[str, str], ...] = (
+    ("arena.txt", "arena"),
+    ("compare.md", "compare"),
+    ("compare.txt", "compare"),
+    ("structure.txt", "structure"),
+)
+
+
+def _per_file_safe_dest(target_dir: Path, file_name: str) -> Path:
+    """Pick a non-colliding destination inside ``target_dir``.
+
+    If the target file already exists, append ``_v2``, ``_v3``... before the
+    extension. Idempotent: if the existing target is byte-identical to the
+    source, return the existing path (caller can skip the move).
+    """
+    candidate = target_dir / file_name
+    if not candidate.exists():
+        return candidate
+    src = Path(file_name)
+    i = 2
+    while True:
+        cand = target_dir / f"{src.stem}_v{i}{src.suffix}"
+        if not cand.exists():
+            return cand
+        i += 1
+
+
+def migrate_to_per_file_folders(output_dir: Path) -> list[Path]:
+    """Reorganize flat outputs into per-file folders.
+
+    New canonical layout produced by the tool:
+
+        <output_dir>/
+            arenas/<arena>/
+                arena/arena.txt
+                compare/compare.<md|txt>
+                answers/A.txt, B.txt, prompt.txt   (already grouped)
+                ARCHIVE/...                         (already grouped)
+            structure/structure.txt
+            models/
+                A/A.txt, B/B.txt, prompt/prompt.txt
+                ARCHIVE/...                         (already grouped)
+
+    This function wraps any *flat* version of those files into the new
+    folder layout. It is idempotent: re-running on an already-migrated
+    tree is a no-op.
+
+    Args:
+        output_dir: Resolved output directory (e.g. ``context_output/``).
+
+    Returns:
+        List of new file paths that were created by the migration.
+    """
+    moved: list[Path] = []
+
+    if not output_dir.is_dir():
+        return moved
+
+    arenas_dir = output_dir / "arenas"
+    if arenas_dir.is_dir():
+        for arena_dir in arenas_dir.iterdir():
+            if not arena_dir.is_dir():
+                continue
+            for flat_name, sub in _PER_FILE_TARGETS:
+                if sub in ("arena", "compare"):
+                    src = arena_dir / flat_name
+                    target = arena_dir / sub
+                    if src.is_file() and src.parent.name != sub:
+                        target.mkdir(parents=True, exist_ok=True)
+                        dst = _per_file_safe_dest(target, src.name)
+                        if dst.exists() and dst.read_bytes() == src.read_bytes():
+                            continue
+                        _ = shutil.move(str(src), str(dst))
+                        moved.append(dst)
+
+    # structure.txt at output_dir root
+    structure_src = output_dir / "structure.txt"
+    if structure_src.is_file():
+        struct_dir = output_dir / "structure"
+        struct_dir.mkdir(parents=True, exist_ok=True)
+        dst = _per_file_safe_dest(struct_dir, "structure.txt")
+        if not (dst.exists() and dst.read_bytes() == structure_src.read_bytes()):
+            _ = shutil.move(str(structure_src), str(dst))
+            moved.append(dst)
+
+    # models/A.txt, B.txt, prompt.txt (active responses, not ARCHIVE/)
+    models_dir = output_dir / "models"
+    if models_dir.is_dir():
+        for entry in list(models_dir.iterdir()):
+            if not entry.is_file():
+                continue
+            name = entry.name
+            if name == "ARCHIVE" or name.startswith("ARCHIVE"):
+                continue
+            if not (name.endswith(".txt") or name.endswith(".md")):
+                continue
+            stem = entry.stem
+            target = models_dir / stem
+            if target.is_dir() and (target / name).exists():
+                continue
+            target.mkdir(parents=True, exist_ok=True)
+            dst = _per_file_safe_dest(target, name)
+            if dst.exists() and dst.read_bytes() == entry.read_bytes():
+                continue
+            _ = shutil.move(str(entry), str(dst))
+            moved.append(dst)
+
+    if moved:
+        rels = ", ".join(str(p.relative_to(output_dir)) for p in moved)
+        print(f"Reorganized to per-file folders: {rels}")
     return moved

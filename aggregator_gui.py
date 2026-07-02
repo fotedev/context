@@ -50,10 +50,14 @@ from core.parser import (  # pyright: ignore[reportAttributeAccessIssue, reportM
     save_settings,
     resolve_output_dir,
     resolve_models_dir,
-    discover_files_txt,
+    discover_files_txt_with_directives,
     resolve_arena_dir,
     migrate_old_outputs,
+    migrate_to_per_file_folders,
     display_settings,
+    build_arena_plan,
+    ArenaAssignment,
+    ArenaDirective,
 )
 from core.counter import count_tokens  # pyright: ignore[reportAttributeAccessIssue, reportMissingImports]
 from core.judge import (  # pyright: ignore[reportAttributeAccessIssue, reportMissingImports]
@@ -1132,6 +1136,8 @@ class AggregatorGUI(tk.Tk):
             # --- Migration ----------------------------------------------------
             self._step("Migrating legacy outputs if needed …")
             migrate_old_outputs(root, output_dir)
+            # --- Reorganize flat outputs into per-file folders (v2 layout) ----
+            migrate_to_per_file_folders(output_dir)
 
             # --- Environment Initialization -----------------------------------
             self._step("Initializing environment …")
@@ -1140,11 +1146,34 @@ class AggregatorGUI(tk.Tk):
 
             # --- Discover files*.txt ------------------------------------------
             self._step("Discovering inputs in .context/inputs/ or root …")
-            discovered = discover_files_txt(root, root, settings)
+            discovered, directive_lookup = discover_files_txt_with_directives(
+                root, root, settings
+            )
             if not discovered:
                 self._log_write("No input files found — nothing to do.", tag="warn")
                 self._set_status("No inputs found.")
                 return
+
+            # --- Target-arena directive plan ----------------------------------
+            respect_directive = bool(settings.get("respect_target_arena_directive", True))
+            on_conflict = str(settings.get("on_arena_number_conflict", "warn_and_shift"))
+            if respect_directive:
+                assignments, plan_warnings = build_arena_plan(
+                    discovered, directive_lookup, on_conflict=on_conflict,
+                )
+                for warning in plan_warnings:
+                    self._log_write(f"[plan] {warning}", tag="warn")
+                assignment_by_path = {a.filepath: a for a in assignments}
+            else:
+                assignment_by_path = {
+                    p: ArenaAssignment(
+                        filepath=p,
+                        arena_name=name,
+                        arena_number=0,
+                        directive=directive_lookup.get(p, ArenaDirective()),
+                    )
+                    for p, name in discovered
+                }
 
             patterns = load_ignore_patterns(root)
             processed_count = 0
@@ -1158,10 +1187,17 @@ class AggregatorGUI(tk.Tk):
 
                 self._step(f"Processing {files_input.name} …")
 
-                arena_dir = resolve_arena_dir(output_dir, arena_name)
-                arena_path = arena_dir / "arena.txt"
-                structure_path = output_dir / "structure.txt"
-                compare_path = arena_dir / f"compare.{output_format}"
+                assignment = assignment_by_path.get(files_input)
+                preferred = (
+                    assignment.arena_number
+                    if assignment and assignment.arena_number > 0
+                    else None
+                )
+                arena_dir = resolve_arena_dir(output_dir, arena_name, preferred_number=preferred)
+                # Per-file folder layout: each output file in its own folder.
+                arena_path = arena_dir / "arena" / "arena.txt"
+                structure_path = output_dir / "structure" / "structure.txt"
+                compare_path = arena_dir / "compare" / f"compare.{output_format}"
 
                 # Writable checks (fail fast)
                 for out_path in (arena_path, structure_path, compare_path):

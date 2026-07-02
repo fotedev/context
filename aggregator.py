@@ -37,12 +37,19 @@ from core.parser import (
     read_file_entries,
     resolve_output_dir,
     resolve_models_dir,
-    discover_files_txt,
+    discover_files_txt_with_directives,
     resolve_arena_dir,
     load_settings,
     save_settings,
     display_settings,
     migrate_old_outputs,
+    migrate_to_per_file_folders,
+    sync_paste_attachments,
+    build_arena_plan,
+    ArenaAssignment,
+    ArenaDirective,
+    get_latest_state,
+    write_state_breadcrumb,
 )
 from core.counter import count_tokens
 from core.judge import (
@@ -230,6 +237,7 @@ def _process_one(
     gemini_judge: bool,
     compact_mode: bool,
     model_count: int,
+    preferred_number: int | None = None,
 ) -> None:
     """Process a single files*.txt input → arena/structure/compare outputs.
 
@@ -242,11 +250,16 @@ def _process_one(
         output_format: "md" or "txt".
         gemini_judge: Whether to run the Gemini judge.
         compact_mode: Whether to use compact compare output.
-        models_dir: Canonical models directory.
+        model_count: Number of model response files to create.
+        preferred_number: Optional explicit arena number from the
+            ``# Target Arena:`` directive.  Forwarded to
+            :func:`resolve_arena_dir`.
     """
-    arena_dir = resolve_arena_dir(output_dir, arena_name)
-    arena_path = arena_dir / "arena.txt"
-    compare_path = arena_dir / f"compare.{output_format}"
+    arena_dir = resolve_arena_dir(output_dir, arena_name, preferred_number=preferred_number)
+    # Per-file folder layout: each output file lives in its own folder so the
+    # arena directory contains only grouped subfolders, never loose files.
+    arena_path = arena_dir / "arena" / "arena.txt"
+    compare_path = arena_dir / "compare" / f"compare.{output_format}"
 
     answers_dir = arena_dir / "answers"
     answers_dir.mkdir(parents=True, exist_ok=True)
@@ -294,8 +307,8 @@ def _process_one(
     print(
         f"[{files_txt.name}] Aggregating {' + '.join(parts)} → {arena_path} …"
     )
-    aggregate_files(entries, arena_path, root)
-    print(f"[{files_txt.name}] Aggregation complete.")
+    total_lines = aggregate_files(entries, arena_path, root)
+    print(f"[{files_txt.name}] Aggregation complete. Total lines: {total_lines}")
 
     # 3. Token counts
     try:
@@ -303,6 +316,7 @@ def _process_one(
         token_count = count_tokens(arena_content)
         print(
             f"[{files_txt.name}] Total size: {len(arena_content)} characters"
+            + f" | Total lines: {total_lines}"
             + f" | Estimated tokens: {token_count}"
         )
     except (OSError, ValueError) as exc:
@@ -438,12 +452,61 @@ def main() -> None:
         default=None,
         help="Override the output folder (default: settings.output_dir).",
     )
+    _ = parser.add_argument(
+        "--status",
+        action="store_true",
+        help="Print a compact project-state snapshot for AI agents and exit.",
+    )
+    _ = parser.add_argument(
+        "--json",
+        action="store_true",
+        help="With --status: emit JSON to stdout (for programmatic use).",
+    )
+    _ = parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="With --status: print only the next arena number on one line.",
+    )
     args = parser.parse_args()
 
     # Resolve project root from positional arg or CWD.
     root_str = cast(str | None, args.root)
     cmd_root = Path(root_str) if root_str else None
     init_root = cmd_root.resolve() if cmd_root else Path.cwd()
+
+    # --- --status: cheap snapshot for AI agents, then exit ----------------
+    show_status = cast(bool, args.status)
+    if show_status:
+        settings = load_settings(init_root)
+        output_dir = resolve_output_dir(init_root, settings)
+        arenas_dir = output_dir / "arenas"
+        inputs_dir_str = str(settings.get("inputs_dir", ".context/inputs"))
+        inputs_dir = init_root / inputs_dir_str
+        state = get_latest_state(arenas_dir, inputs_dir)
+
+        if cast(bool, args.quiet):
+            print(f"{state['next_number']:03d}" if state["next_number"] else "001")
+            return
+
+        if cast(bool, args.json):
+            import json as _json
+            print(_json.dumps(state, indent=2, ensure_ascii=False))
+            return
+
+        # Human-readable block (kept intentionally short to save agent tokens)
+        print("--- PROJECT STATE ---")
+        print(f"last_arena   : {state['last_arena'] or '(none)'}")
+        if state["next_number"]:
+            print(f"next_number  : {state['next_number']:03d}")
+        else:
+            print("next_number  : 001")
+        print(f"total_arenas : {state['total_arenas']}")
+        if state["latest_activity_arena"]:
+            print(f"last_activity: {state['latest_activity_arena']} ({state['latest_activity_time']})")
+        print(f"total_inputs : {state['total_inputs']}")
+        if state["latest_input"]:
+            print(f"latest_input : {state['latest_input']} ({state['latest_input_time']})")
+        return
 
     # --- Req 10: --settings flag -----------------------------------------
     show_settings = cast(bool, args.settings)
@@ -482,6 +545,8 @@ def main() -> None:
 
     # --- Migrate legacy CWD outputs + root models/ into output_dir/ ------
     _ = migrate_old_outputs(init_root, output_dir)
+    # --- Wrap any flat outputs into per-file folders (v2 layout) --------
+    _ = migrate_to_per_file_folders(output_dir)
 
     # --- Initialize environment (files.txt) ---------
     initialize_environment(init_root, model_count, output_dir)
@@ -528,7 +593,8 @@ def main() -> None:
     )
     live_structure = "\n".join(tree_lines)
 
-    structure_path = output_dir / "structure.txt"
+    # structure.txt also lives in its own folder for consistency.
+    structure_path = output_dir / "structure" / "structure.txt"
     should_write_structure = False
 
     if not structure_path.is_file():
@@ -556,12 +622,49 @@ def main() -> None:
         print(f"Structure written → {structure_path}")
 
     # --- Req 2: discover and process ALL files*.txt ----------------------
-    discovered = discover_files_txt(cwd, root, settings)
+    discovered, directive_lookup = discover_files_txt_with_directives(
+        cwd, root, settings
+    )
     if not discovered:
         print("No files*.txt found in CWD or .context/inputs/ — nothing to do.")
         return
 
+    # --- Target-arena directive plan --------------------------------------
+    respect_directive = bool(settings.get("respect_target_arena_directive", True))
+    on_conflict = str(settings.get("on_arena_number_conflict", "warn_and_shift"))
+
+    if respect_directive:
+        assignments, plan_warnings = build_arena_plan(
+            discovered,
+            directive_lookup,
+            on_conflict=on_conflict,
+        )
+        # Print conflict warnings now so they are visible alongside stdout.
+        for warning in plan_warnings:
+            print(f"WARNING: {warning}", file=sys.stderr)
+        # Build a quick lookup for the inner loop.
+        assignment_by_path: dict[Path, ArenaAssignment] = {
+            a.filepath: a for a in assignments
+        }
+    else:
+        # Legacy behaviour: every input gets auto-numbered, no directives used.
+        assignment_by_path = {
+            p: ArenaAssignment(
+                filepath=p,
+                arena_name=name,
+                arena_number=0,  # signal "auto" to _process_one
+                directive=directive_lookup.get(p, ArenaDirective()),
+            )
+            for p, name in discovered
+        }
+
     for files_input, arena_name in discovered:
+        assignment = assignment_by_path.get(files_input)
+        preferred = (
+            assignment.arena_number
+            if assignment and assignment.arena_number > 0
+            else None
+        )
         try:
             _process_one(
                 files_txt=files_input,
@@ -573,10 +676,11 @@ def main() -> None:
                 gemini_judge=gemini_judge,
                 compact_mode=compact_mode,
                 model_count=model_count,
+                preferred_number=preferred,
             )
             # --- Req 5: archiving workflow (local to each arena) -----------------
             if archive:
-                arena_dir = resolve_arena_dir(output_dir, arena_name)
+                arena_dir = resolve_arena_dir(output_dir, arena_name, preferred_number=preferred)
                 answers_dir = arena_dir / "answers"
                 archived = archive_model_responses(
                     root or Path.cwd(), archive_dir, answers_dir,
@@ -590,6 +694,59 @@ def main() -> None:
                 f"ERROR processing {files_input.name}: {exc}",
                 file=sys.stderr,
             )
+
+    # --- Validation report (target-arena directives) ----------------------
+    if respect_directive:
+        n_total = len(discovered)
+        n_with_directive = sum(
+            1 for d in directive_lookup.values() if d.has_directive
+        )
+        n_shifted = sum(
+            1
+            for p, _ in discovered
+            if directive_lookup.get(p, ArenaDirective()).has_directive
+            and (
+                (a := assignment_by_path.get(p))
+                and a.directive.number != a.arena_number
+            )
+        )
+        n_stale_names = sum(
+            1
+            for p, _ in discovered
+            if (d := directive_lookup.get(p, ArenaDirective())).has_directive
+            and d.name is not None
+            and (
+                (a := assignment_by_path.get(p))
+                and d.name.lower().replace("-", "") != a.arena_name.lower().replace("-", "")
+            )
+        )
+        n_auto = n_total - n_with_directive
+        print()
+        print("Arena directive check:")
+        print(f"  Total inputs:                {n_total}")
+        print(f"  With '# Target Arena:':      {n_with_directive}")
+        if n_shifted:
+            print(f"  Shifted (conflict):          {n_shifted}  (see warnings above)")
+        if n_stale_names:
+            print(
+                f"  Stale directive name:        {n_stale_names}  "
+                "(filename used as source of truth; update the directive to match)"
+            )
+        print(f"  Auto-numbered (no directive):{n_auto}")
+
+    # --- Paste-attachments archival: copy today's manual pastes into
+    # context_output/ with smart-keyword filenames. Disabled by default.
+    _ = sync_paste_attachments(init_root, output_dir, settings)
+
+    # --- Write state breadcrumb (Phase F: optional cache) -----------------
+    try:
+        write_state_breadcrumb(
+            init_root / ".context",
+            output_dir / "arenas",
+            init_root / str(settings.get("inputs_dir", ".context/inputs")),
+        )
+    except OSError as exc:
+        print(f"Warning: Could not write state breadcrumb: {exc}", file=sys.stderr)
 
     print(f"\nDone. Outputs written to: {output_dir}")
 

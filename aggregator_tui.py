@@ -540,12 +540,16 @@ class AggregatorTUI(App[None]):
 
             # Resolve arena directory
             from core.parser import load_settings, resolve_output_dir, resolve_arena_dir
+            from core.parser import migrate_to_per_file_folders
             settings = load_settings(resolved_root)
             output_dir = resolve_output_dir(resolved_root, settings)
+            # Reorganize flat outputs into per-file folders (v2 layout).
+            migrate_to_per_file_folders(output_dir)
             arena_dir = resolve_arena_dir(output_dir, _FILES_TXT.stem)
             
-            arena_txt = arena_dir / "arena.txt"
-            structure_txt = output_dir / "structure.txt"
+            # Per-file folder layout: each output file in its own folder.
+            arena_txt = arena_dir / "arena" / "arena.txt"
+            structure_txt = output_dir / "structure" / "structure.txt"
 
             if root:
                 tree_lines = [f"Project Root: {root.name}/"] + generate_tree(
