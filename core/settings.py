@@ -24,7 +24,9 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "compact_mode": False,
     "archive": False,
     "archive_dir": "ARCHIVE",
-    "inputs_dir": ".context/inputs",
+    # NOTE: `inputs_dir` was removed in the flat-layout refactor.
+    # Input files now live alongside their arena outputs in
+    # `context_output/arenas/<NNN>-<name>/<input>.txt`.
     # Paste-attachments archival (paste long text into a file in
     # tmp/paste-attachments/<date>/; tool renames + copies into output dir on run).
     "paste_attachments_enabled": False,
@@ -347,7 +349,10 @@ def _migrate_settings_file(root: Path, merged: dict[str, object]) -> None:
 
     Preserves every existing user value; only adds keys that were not present.
     Idempotent — a second call writes nothing because ``missing`` becomes empty.
+    Also removes the deprecated ``inputs_dir`` key from legacy files so the
+    JSON doesn't carry dead config after the flat-layout refactor.
     """
+    deprecated_keys = {"inputs_dir"}
     new_keys = {
         "paste_attachments_enabled",
         "paste_attachments_source_dir",
@@ -371,11 +376,14 @@ def _migrate_settings_file(root: Path, merged: dict[str, object]) -> None:
         return
 
     missing = new_keys - set(current.keys())
-    if not missing:
+    deprecated_present = deprecated_keys & set(current.keys())
+    if not missing and not deprecated_present:
         return
 
     for key in missing:
         current[key] = merged.get(key)
+    for key in deprecated_present:
+        _ = current.pop(key)
 
     try:
         save_settings(root, current)

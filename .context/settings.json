@@ -6,7 +6,6 @@
   "compact_mode": false,
   "archive": true,
   "archive_dir": "ARCHIVE",
-  "inputs_dir": ".context/inputs",
   "paste_attachments_source_dir": "tmp/paste-attachments",
   "paste_attachments_enabled": false,
   "paste_attachments_target_subdir": "tmp/paste-attachments",

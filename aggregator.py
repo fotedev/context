@@ -44,6 +44,7 @@ from core.parser import (
     display_settings,
     migrate_old_outputs,
     migrate_to_per_file_folders,
+    migrate_to_flat_layout,
     sync_paste_attachments,
     build_arena_plan,
     ArenaAssignment,
@@ -239,7 +240,13 @@ def _process_one(
     model_count: int,
     preferred_number: int | None = None,
 ) -> None:
-    """Process a single files*.txt input → arena/structure/compare outputs.
+    """Process a single files*.txt input → flat outputs in the arena directory (v3 layout).
+
+    v3 flat layout: ``arena.txt``, ``compare.md``, ``A.txt``, ``B.txt``,
+    ``prompt.txt`` all live directly inside ``context_output/arenas/NNN-<name>/``
+    (no ``arena/``, ``compare/``, ``answers/`` subfolders). The input
+    ``files.txt`` is also copied into the arena directory so each arena is
+    self-contained.
 
     Args:
         files_txt: Path to the input files listing.
@@ -255,19 +262,33 @@ def _process_one(
             ``# Target Arena:`` directive.  Forwarded to
             :func:`resolve_arena_dir`.
     """
-    arena_dir = resolve_arena_dir(output_dir, arena_name, preferred_number=preferred_number)
-    # Per-file folder layout: each output file lives in its own folder so the
-    # arena directory contains only grouped subfolders, never loose files.
-    arena_path = arena_dir / "arena" / "arena.txt"
-    compare_path = arena_dir / "compare" / f"compare.{output_format}"
+    import shutil as _shutil
 
-    answers_dir = arena_dir / "answers"
-    answers_dir.mkdir(parents=True, exist_ok=True)
-    prompt_file = answers_dir / "prompt.txt"
+    arena_dir = resolve_arena_dir(output_dir, arena_name, preferred_number=preferred_number)
+    arena_dir.mkdir(parents=True, exist_ok=True)
+
+    # v3 flat output paths — every file lives directly in arena_dir.
+    arena_path = arena_dir / "arena.txt"
+    compare_path = arena_dir / f"compare.{output_format}"
+
+    # Copy input file into arena_dir so the arena is self-contained.
+    target_input_path = arena_dir / files_txt.name
+    if files_txt.parent.resolve() != arena_dir.resolve() and not target_input_path.exists():
+        try:
+            _shutil.copy2(str(files_txt), str(target_input_path))
+            print(f"[{files_txt.name}] Copied input → {target_input_path}")
+        except OSError as exc:
+            print(
+                f"[{files_txt.name}] Warning: Could not copy input into arena: {exc}",
+                file=sys.stderr,
+            )
+
+    # Ensure flat prompt.txt + A.txt/B.txt/... templates exist in arena_dir.
+    prompt_file = arena_dir / "prompt.txt"
     if not prompt_file.exists():
         _ = prompt_file.touch()
         print(f"[{files_txt.name}] Created {prompt_file}")
-    ensure_model_templates(root or Path.cwd(), model_count, answers_dir)
+    ensure_model_templates(root or Path.cwd(), model_count, arena_dir)
 
     # Read entries. Missing file → empty list (EC1: still emit empty outputs).
     try:
@@ -279,9 +300,8 @@ def _process_one(
     # EC1: empty files.txt → create empty templates in the output folder.
     if not entries:
         print(
-            f"No entries found in {files_txt.name} — writing empty outputs to {output_dir}/"
+            f"No entries found in {files_txt.name} — writing empty outputs to {arena_dir}/"
         )
-        arena_path.parent.mkdir(parents=True, exist_ok=True)
         _ = arena_path.write_text("", encoding="utf-8")
         generate_compare_template(compare_path)
         return
@@ -322,8 +342,10 @@ def _process_one(
     except (OSError, ValueError) as exc:
         print(f"[{files_txt.name}] Warning: Could not count tokens: {exc}")
 
-    # 4. Compare output from models/ dir (or llm.txt fallback) or template
-    prompt, models_data = collect_model_responses(root, output_format, answers_dir)
+    # 4. Compare output from arena_dir flat model files (or llm.txt fallback).
+    prompt, models_data = collect_model_responses(
+        root, output_format, arena_dir, model_count
+    )
     if models_data:
         verdict: str | None = None
         if gemini_judge:
@@ -547,6 +569,9 @@ def main() -> None:
     _ = migrate_old_outputs(init_root, output_dir)
     # --- Wrap any flat outputs into per-file folders (v2 layout) --------
     _ = migrate_to_per_file_folders(output_dir)
+    # --- Flatten per-file folders into the v3 truly-flat layout ---------
+    # Safe to run every time: idempotent on already-flat trees.
+    _ = migrate_to_flat_layout(output_dir)
 
     # --- Initialize environment (files.txt) ---------
     initialize_environment(init_root, model_count, output_dir)
@@ -681,13 +706,12 @@ def main() -> None:
             # --- Req 5: archiving workflow (local to each arena) -----------------
             if archive:
                 arena_dir = resolve_arena_dir(output_dir, arena_name, preferred_number=preferred)
-                answers_dir = arena_dir / "answers"
                 archived = archive_model_responses(
-                    root or Path.cwd(), archive_dir, answers_dir,
+                    root or Path.cwd(), archive_dir, arena_dir,
                 )
                 if archived:
                     # Re-create fresh templates for the configured model count.
-                    _ = ensure_model_templates(root or Path.cwd(), model_count, answers_dir)
+                    _ = ensure_model_templates(root or Path.cwd(), model_count, arena_dir)
                     print(f"[{files_input.name}] Archived {len(archived)} file(s) to {archive_dir}.")
         except Exception as exc:  # pylint: disable=broad-exception-caught  # noqa: BLE001 — last-resort guard per file
             print(

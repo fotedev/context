@@ -841,3 +841,171 @@ def migrate_to_per_file_folders(output_dir: Path) -> list[Path]:
         rels = ", ".join(str(p.relative_to(output_dir)) for p in moved)
         print(f"Reorganized to per-file folders: {rels}")
     return moved
+
+
+# ---------------------------------------------------------------------------
+# Flat-layout migration (v3: arena.txt, compare.md, A.txt, ... directly in arena dir)
+# ---------------------------------------------------------------------------
+
+# v2 per-file-folder subfolders that need to be flattened.
+# Each entry: (subfolder_name, child_filename_in_subfolder)
+# If a file exists in arena_dir/<subfolder>/<filename>, move it up to arena_dir/<filename>.
+_FLAT_LAYOUT_SOURCES: tuple[tuple[str, str], ...] = (
+    ("arena", "arena.txt"),
+    ("compare", "compare.md"),
+    ("compare", "compare.txt"),
+    ("answers", "prompt.txt"),
+)
+
+# Model-response files that lived in <arena>/answers/ in the v2 layout and
+# need to move up to <arena>/<LETTER>.txt in the v3 layout.
+_ANSWERS_MODEL_LETTERS = ("A", "B", "C", "D", "E", "F")
+
+
+def _move_up_flat(arena_dir: Path, sub: str, fname: str, moved: list[Path]) -> None:
+    """Move ``<arena_dir>/<sub>/<fname>`` up to ``<arena_dir>/<fname>`` if needed.
+
+    Skips when the source doesn't exist, when the destination already exists
+    with the same content, or when the subfolder itself is gone.
+    """
+    src = arena_dir / sub / fname
+    if not src.is_file():
+        return
+    dst = arena_dir / fname
+    if dst.exists():
+        try:
+            if dst.read_bytes() == src.read_bytes():
+                return  # already migrated, identical content
+        except OSError:
+            pass
+        # If the file already exists with different content, don't clobber.
+        # Use a _v2 / _v3 suffix.
+        stem = dst.stem
+        suffix = dst.suffix
+        i = 2
+        while True:
+            cand = arena_dir / f"{stem}_v{i}{suffix}"
+            if not cand.exists():
+                dst = cand
+                break
+            i += 1
+    _ = shutil.move(str(src), str(dst))
+    moved.append(dst)
+
+
+def _flatten_answers(arena_dir: Path, moved: list[Path]) -> None:
+    """Move ``<arena_dir>/answers/A.txt`` (etc.) up to ``<arena_dir>/A.txt``.
+
+    Also moves any ``<letter>_NOTES.md``/``<letter>_NOTES.txt`` files.
+    """
+    answers_dir = arena_dir / "answers"
+    if not answers_dir.is_dir():
+        return
+    for letter in _ANSWERS_MODEL_LETTERS:
+        _move_up_flat(arena_dir, "answers", f"{letter}.txt", moved)
+    # NOTES files: <letter>_NOTES.<ext>
+    for f in list(answers_dir.iterdir()):
+        if f.is_file() and re.match(r"^[A-Z]_NOTES\.(md|txt)$", f.name):
+            target = arena_dir / f.name
+            if target.exists():
+                # If notes already at root, skip (likely already migrated).
+                continue
+            _ = shutil.move(str(f), str(target))
+            moved.append(target)
+
+
+def _prune_empty_subdirs(arena_dir: Path) -> None:
+    """Remove the now-empty v2 subfolders from an arena directory.
+
+    Best-effort: silently skip subdirs that still contain files (user has
+    out-of-band content there we should never touch).
+    """
+    for sub in ("arena", "compare", "answers", "ARCHIVE"):
+        # Don't touch ARCHIVE — it is preserved as-is in v3.
+        if sub == "ARCHIVE":
+            continue
+        d = arena_dir / sub
+        if d.is_dir():
+            try:
+                # Only remove if empty; if non-empty, leave it (user owns it).
+                d.rmdir()
+            except OSError:
+                pass
+
+
+def migrate_to_flat_layout(
+    output_dir: Path, dry_run: bool = False
+) -> list[Path]:
+    """Migrate from the v2 per-file-folder layout to the v3 flat layout.
+
+    v2 (per-file-folder):
+        <output>/arenas/<NNN>-<name>/
+            arena/arena.txt
+            compare/compare.md (or .txt)
+            answers/A.txt, B.txt, prompt.txt
+            answers/ARCHIVE/  (preserved as-is)
+
+    v3 (flat):
+        <output>/arenas/<NNN>-<name>/
+            arena.txt
+            compare.md (or .txt)
+            A.txt, B.txt, prompt.txt
+            <input>.txt     (the copied input file)
+            ARCHIVE/        (preserved as-is)
+
+    Also flattens the legacy root-level models/ dir if it ever existed
+    (already handled by ``migrate_old_outputs`` — kept here for parity).
+
+    Args:
+        output_dir: Resolved output directory (e.g. ``context_output/``).
+        dry_run: If True, only report what *would* move; make no changes.
+
+    Returns:
+        List of paths that were created by the migration.
+    """
+    if not output_dir.is_dir():
+        return []
+
+    moved: list[Path] = []
+
+    arenas_dir = output_dir / "arenas"
+    if arenas_dir.is_dir():
+        for arena_dir in arenas_dir.iterdir():
+            if not arena_dir.is_dir():
+                continue
+            if dry_run:
+                # Compute what would move without actually moving.
+                planned = _plan_flatten(arena_dir)
+                moved.extend(planned)
+            else:
+                for sub, fname in _FLAT_LAYOUT_SOURCES:
+                    _move_up_flat(arena_dir, sub, fname, moved)
+                _flatten_answers(arena_dir, moved)
+                _prune_empty_subdirs(arena_dir)
+
+    if moved and not dry_run:
+        rels = ", ".join(str(p.relative_to(output_dir)) for p in moved[:10])
+        suffix = " ..." if len(moved) > 10 else ""
+        print(f"Flattened v2→v3 layout: {rels}{suffix}")
+    return moved
+
+
+def _plan_flatten(arena_dir: Path) -> list[Path]:
+    """Compute (without applying) the list of files that ``migrate_to_flat_layout``
+    *would* move out of the v2 subfolders into the arena root.
+    """
+    planned: list[Path] = []
+    for sub, fname in _FLAT_LAYOUT_SOURCES:
+        src = arena_dir / sub / fname
+        if src.is_file():
+            planned.append(arena_dir / fname)
+    answers_dir = arena_dir / "answers"
+    if answers_dir.is_dir():
+        for letter in _ANSWERS_MODEL_LETTERS:
+            src = answers_dir / f"{letter}.txt"
+            if src.is_file():
+                planned.append(arena_dir / f"{letter}.txt")
+        for f in answers_dir.iterdir():
+            if f.is_file() and re.match(r"^[A-Z]_NOTES\.(md|txt)$", f.name):
+                planned.append(arena_dir / f.name)
+    return planned

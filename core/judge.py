@@ -201,68 +201,64 @@ class GeminiJudge(BaseJudge):
 def collect_model_responses(
     root: Path | None,
     output_format: str = "md",
-    models_dir: Path | None = None,
+    arena_dir: Path | None = None,
+    model_count: int = 2,
 ) -> tuple[str, list[dict[str, str]]]:
-    """Auto-discover model responses and notes from the ``models/`` directory.
+    """Read model responses directly from a flat arena directory (v3 layout).
 
+    The v3 flat layout puts ``prompt.txt``, ``A.txt``, ``B.txt``, ... directly
+    inside the arena directory (no ``answers/`` or ``models/`` subfolders).
     For each model file found (e.g. ``A.txt``), also checks for a
     corresponding notes file whose extension matches *output_format*
     (e.g. ``A_NOTES.md`` when *output_format* is ``"md"``, ``A_NOTES.txt``
     when ``"txt"``).  Notes content is stored in the ``"notes"`` key of
     each model dict — Edge case 7.
 
-    Falls back to parsing ``llm.txt`` if ``models/`` contains no
-    non-empty responses.
+    Falls back to parsing ``llm.txt`` (at project root) if no model
+    responses are found.
 
     Args:
         root: Project root directory (or ``None`` for CWD).
         output_format: Extension for notes matching (``"md"`` or ``"txt"``).
-        models_dir: Canonical models directory (e.g. ``output_dir/models``).
-                    When ``None``, falls back to ``root/models/`` for
-                    backwards compatibility.
+        arena_dir: Arena directory containing flat ``prompt.txt``/``A.txt``/
+                   ``B.txt`` files. When ``None``, falls back to
+                   ``root/models/`` for backwards compatibility.
+        model_count: Number of model files to consider (A..).
 
     Returns:
         Tuple of ``(prompt_text, models_data)`` where each entry in
         *models_data* has keys ``name``, ``response``, and ``notes``.
     """
     target_root = root if root is not None else Path.cwd()
-    if models_dir is None:
-        models_dir = target_root / "models"
+    # Backwards-compat fallback: when arena_dir is None, look in old
+    # root/models/ dir.
+    flat_dir = arena_dir if arena_dir is not None else (target_root / "models")
     llm_txt = target_root / "llm.txt"
 
-    if models_dir.is_dir():
+    if flat_dir.is_dir():
         prompt = ""
-        prompt_file = models_dir / "prompt.txt"
+        prompt_file = flat_dir / "prompt.txt"
         if prompt_file.is_file():
             prompt = prompt_file.read_text(encoding="utf-8").strip()
 
         models_data: list[dict[str, str]] = []
         notes_ext = f".{output_format}"
 
-        for f in sorted(models_dir.iterdir()):
-            # Skip non-files and special files
-            if f.name == "prompt.txt" or not f.is_file():
+        for i in range(model_count):
+            letter = chr(ord("A") + i)
+            model_file = flat_dir / f"{letter}.txt"
+            if not model_file.is_file():
                 continue
 
-            # Skip notes files — they are loaded per-model below
-            if re.match(r"^[A-Z]_NOTES\.(md|txt)$", f.name, re.IGNORECASE):
-                continue
-
-            # Only process single-letter model files (A.txt, B.txt, etc.)
-            if not re.match(r"^[A-Z]\.txt$", f.name):
-                continue
-
-            response = f.read_text(encoding="utf-8").strip()
+            response = model_file.read_text(encoding="utf-8").strip()
             if not response:
                 response = "[NO RESPONSE PROVIDED - FILE EMPTY]"
 
-            name = f.stem
-            if not name.lower().startswith("model"):
-                name = f"Model {name}"
+            name = f"Model {letter}"
 
             # Look for notes file matching the output format (Req 6, EC7)
             notes = ""
-            notes_file = models_dir / f"{f.stem}_NOTES{notes_ext}"
+            notes_file = flat_dir / f"{letter}_NOTES{notes_ext}"
             if notes_file.is_file():
                 notes = notes_file.read_text(encoding="utf-8").strip()
 
@@ -562,39 +558,55 @@ def generate_compare_template(
 
 def archive_model_responses(
     root: Path,
-    archive_dir: str = "models/ARCHIVE",
-    models_dir: Path | None = None,
+    archive_dir: str = "ARCHIVE",
+    arena_dir: Path | None = None,
 ) -> list[Path]:
-    """Archive current model responses by copying them to archive_dir and clearing active templates.
+    """Archive current model responses by copying them to *archive_dir* and
+    clearing the active templates from the flat arena directory.
 
-    Copies active responses and notes with a timestamp suffix (e.g. A_YYYYMMDD_HHMMSS.txt)
-    and then deletes the active templates from models_dir.
+    The v3 flat layout puts ``A.txt``/``B.txt``/``prompt.txt`` directly inside
+    *arena_dir*; archived copies are written to ``<arena_dir>/<archive_dir>/``
+    by default (or wherever the user-configured *archive_dir* resolves to).
+
+    Copies active responses and notes with a timestamp suffix
+    (e.g. ``A_YYYYMMDD_HHMMSS.txt``) and then deletes the active templates.
+
+    Backwards-compat: if *arena_dir* is ``None``, falls back to scanning
+    ``root/models/`` for legacy support.
     """
-    if models_dir is None:
-        models_dir = root / "models"
-    if not models_dir.is_dir():
-        print("Warning: models/ directory not found — nothing to archive.", file=sys.stderr)
+    # Backwards-compat fallback: when arena_dir is None, look in old
+    # root/models/ dir.
+    flat_dir = arena_dir if arena_dir is not None else (root / "models")
+    if not flat_dir.is_dir():
+        print(
+            f"Warning: arena/models directory not found at {flat_dir} — "
+            "nothing to archive.",
+            file=sys.stderr,
+        )
         return []
 
-    # Resolve archive_dir path dynamically
+    # Resolve archive_dir path dynamically.
+    # v3 default: ARCHIVE/ lives inside the arena directory.
     archive_path = Path(archive_dir)
     if archive_path.is_absolute():
         resolved_archive_dir = archive_path
     else:
-        # If relative, resolve relative to models_dir's parent (which is the arena root dir)
-        # If the path starts with "models" or "answers", strip it first
+        # If relative, resolve relative to the flat_dir's parent (which is the
+        # arena root dir, e.g. context_output/arenas/NNN-<name>/).
+        # If the path starts with "models" or "answers", strip it first to
+        # avoid creating a nested models/ARCHIVE/ path.
         parts = list(archive_path.parts)
         if parts and parts[0] in ("models", "answers"):
-            resolved_archive_dir = models_dir.parent / Path(*parts[1:])
+            resolved_archive_dir = flat_dir.parent / Path(*parts[1:])
         else:
-            resolved_archive_dir = models_dir.parent / archive_path
+            resolved_archive_dir = flat_dir.parent / archive_path
 
     cleared: list[Path] = []
-    
+
     # Identify files to archive and clear
     files_to_archive: list[Path] = []
-    
-    for f in models_dir.iterdir():
+
+    for f in flat_dir.iterdir():
         if f.is_file():
             if re.match(r"^[A-Z]\.txt$", f.name):
                 files_to_archive.append(f)
@@ -606,27 +618,30 @@ def archive_model_responses(
 
     # Ensure archive directory exists
     resolved_archive_dir.mkdir(parents=True, exist_ok=True)
-    
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
+
     # 1. Copy files to the archive directory
     for f in files_to_archive:
         stem = f.stem
         suffix = f.suffix
         dest_name = f"{stem}_{timestamp}{suffix}"
         dest_path = resolved_archive_dir / dest_name
-        
+
         # Handle collision (append _1, _2, etc.)
         counter = 1
         while dest_path.exists():
             dest_name = f"{stem}_{timestamp}_{counter}{suffix}"
             dest_path = resolved_archive_dir / dest_name
             counter += 1
-            
+
         try:
             shutil.copy2(f, dest_path)
         except OSError as e:
-            print(f"Warning: Could not archive {f.name} to {dest_path} - {e}", file=sys.stderr)
+            print(
+                f"Warning: Could not archive {f.name} to {dest_path} - {e}",
+                file=sys.stderr,
+            )
 
     # 2. Safely unlink active templates after copying
     for f in files_to_archive:
@@ -648,9 +663,9 @@ def archive_model_responses(
 def ensure_model_templates(
     root: Path,
     model_count: int = 2,
-    models_dir: Path | None = None,
+    arena_dir: Path | None = None,
 ) -> list[str]:
-    """Ensure model template files exist for the given count.
+    """Ensure model template files exist in the flat arena directory (v3 layout).
 
     If *model_count* is 4 but only ``A.txt`` and ``B.txt`` exist,
     creates empty ``C.txt`` and ``D.txt`` files — Edge case 3.
@@ -658,20 +673,20 @@ def ensure_model_templates(
     Args:
         root: Project root directory (fallback anchor).
         model_count: Number of model files to ensure exist.
-        models_dir: Canonical models directory. When ``None``, falls back
-                    to ``root/models/`` for backwards compatibility.
+        arena_dir: Arena directory where flat model files live.
+                   When ``None``, falls back to ``root/models/`` for
+                   backwards compatibility.
 
     Returns:
         List of newly created model names (e.g. ``['C', 'D']``).
     """
-    if models_dir is None:
-        models_dir = root / "models"
-    if not models_dir.is_dir():
-        models_dir.mkdir(parents=True, exist_ok=True)
+    flat_dir = arena_dir if arena_dir is not None else (root / "models")
+    if not flat_dir.is_dir():
+        flat_dir.mkdir(parents=True, exist_ok=True)
 
     # Detect existing model response files
     existing: set[str] = set()
-    for f in models_dir.iterdir():
+    for f in flat_dir.iterdir():
         if f.is_file() and re.match(r"^[A-Z]\.txt$", f.name):
             existing.add(f.stem)
 
@@ -679,7 +694,7 @@ def ensure_model_templates(
     for i in range(model_count):
         letter = chr(ord("A") + i)
         if letter not in existing:
-            model_file = models_dir / f"{letter}.txt"
+            model_file = flat_dir / f"{letter}.txt"
             model_file.touch()
             created.append(letter)
 
