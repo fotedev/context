@@ -104,16 +104,34 @@ def migrate_inputs(root: Path, dry_run: bool = False) -> dict:
 
     if not inputs_dir.is_dir():
         print(f"No inputs dir at {inputs_dir} — nothing to migrate.")
-        return {"moves": [], "already": [], "orphans": [], "moved_count": 0}
+        return {
+            "moves": [],
+            "already": [],
+            "orphans": [],
+            "moved_count": 0,
+            "remaining_in_inputs": 0,
+        }
     if not arenas_dir.is_dir():
         print(f"Error: arenas dir not found at {arenas_dir}.", file=sys.stderr)
-        return {"moves": [], "already": [], "orphans": [], "moved_count": 0}
+        return {
+            "moves": [],
+            "already": [],
+            "orphans": [],
+            "moved_count": 0,
+            "remaining_in_inputs": _count_remaining(inputs_dir),
+        }
 
     moves, already, orphans = _plan_migration(inputs_dir, arenas_dir)
 
     if not moves and not already and not orphans:
         print("No input files to migrate.")
-        return {"moves": [], "already": [], "orphans": [], "moved_count": 0}
+        return {
+            "moves": [],
+            "already": [],
+            "orphans": [],
+            "moved_count": 0,
+            "remaining_in_inputs": _count_remaining(inputs_dir),
+        }
 
     # Section 1: would-be moves
     if moves:
@@ -162,7 +180,12 @@ def migrate_inputs(root: Path, dry_run: bool = False) -> dict:
 
 
 def ensure_gitignore(root: Path, dry_run: bool = False) -> None:
-    """Append ``.context/inputs/`` to the project's .gitignore if not already there."""
+    """Append ``.context/inputs/`` to the project's .gitignore if not already there.
+
+    Matching is normalized: strips whitespace + leading ``/`` + trailing ``/``
+    so that existing entries like ``/.context/inputs`` or ``.context/inputs``
+    are correctly recognized as the same path.
+    """
     gitignore = root / ".gitignore"
     try:
         content = gitignore.read_text(encoding="utf-8") if gitignore.is_file() else ""
@@ -170,9 +193,12 @@ def ensure_gitignore(root: Path, dry_run: bool = False) -> None:
         print(f"Warning: could not read .gitignore: {exc}", file=sys.stderr)
         return
 
-    entry_variants = {GITIGNORE_ENTRY, GITIGNORE_ENTRY.rstrip("/")}
+    def _normalize(entry: str) -> str:
+        return entry.strip().lstrip("/").rstrip("/")
+
+    target = _normalize(GITIGNORE_ENTRY)
     for line in content.splitlines():
-        if line.strip() in entry_variants:
+        if _normalize(line) == target:
             print(f"\n.gitignore already contains {GITIGNORE_ENTRY} — skipping.")
             return
 
@@ -217,8 +243,9 @@ def main(argv: list[str]) -> int:
     remaining = summary["remaining_in_inputs"]
     has_activity = bool(summary["moves"] or summary["already"] or summary["orphans"])
 
-    if remaining == 0 and has_activity:
-        # The legacy dir is fully drained — safe to gitignore.
+    if remaining == 0:
+        # The legacy dir is fully drained (or was always empty/missing) —
+        # safe to gitignore regardless of whether there was any activity.
         ensure_gitignore(root, dry_run=args.dry_run)
     elif has_activity:
         print(
