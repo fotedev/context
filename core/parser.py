@@ -600,6 +600,9 @@ def resolve_models_dir(output_dir: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 # Legacy output files written by older versions of the tool directly into CWD.
+# Only v1/v2 filenames — the v3+ names (``context.*``, ``arena.md``) are the
+# canonical flat layout and MUST NOT be re-migrated from CWD or wrapped into
+# per-file folders (see ``migrate_to_per_file_folders``).
 _LEGACY_OUTPUT_FILES: tuple[str, ...] = (
     "arena.txt",
     "structure.txt",
@@ -730,6 +733,11 @@ def migrate_old_outputs(root: Path, output_dir: Path) -> list[Path]:
 # Each entry is (filename_pattern, target_subfolder).
 # Patterns use ``.suffix`` matching so both ``compare.md`` and ``compare.txt``
 # work without listing each.
+#
+# IMPORTANT: only v1/v2 flat filenames belong here. The v3+ canonical
+# filenames (``context.*``, ``arena.md``) ARE the flat layout and must NOT
+# be wrapped into per-file folders — ``migrate_to_flat_layout`` would then
+# have to flatten them again on every run (round-trip).
 _PER_FILE_TARGETS: tuple[tuple[str, str], ...] = (
     ("arena.txt", "arena"),
     ("compare.md", "compare"),
@@ -849,7 +857,7 @@ def migrate_to_per_file_folders(output_dir: Path) -> list[Path]:
 
 # v2 per-file-folder subfolders that need to be flattened.
 # Each entry: (subfolder_name, child_filename_in_subfolder)
-# If a file exists in arena_dir/<subfolder>/<filename>, move it up to arena_dir/<filename>.
+# If a file exists in arena_dir/<subfolder>/, move it up to arena_dir/.
 _FLAT_LAYOUT_SOURCES: tuple[tuple[str, str], ...] = (
     ("arena", "arena.txt"),
     ("compare", "compare.md"),
@@ -893,6 +901,101 @@ def _move_up_flat(arena_dir: Path, sub: str, fname: str, moved: list[Path]) -> N
     moved.append(dst)
 
 
+def _rename_with_collision(
+    src: Path, dst: Path, moved: list[Path]
+) -> None:
+    """Rename ``src`` → ``dst`` with collision detection (v3 → v3+ rename helper).
+
+    Idempotent:
+    * If ``src`` does not exist or ``src == dst``, no-op.
+    * If ``dst`` exists with the same content, ``src`` is deleted (already migrated).
+    * If ``dst`` exists with different content, ``dst`` gets a ``_v2`` suffix
+      (we never clobber user data).
+    """
+    if not src.is_file() or src == dst:
+        return
+    if dst.exists():
+        try:
+            if dst.read_bytes() == src.read_bytes():
+                _ = src.unlink()  # identical — drop the duplicate
+                return
+        except OSError:
+            pass
+        # Conflict — preserve the existing file, push the rename aside.
+        stem, suffix = dst.stem, dst.suffix
+        i = 2
+        while True:
+            cand = dst.parent / f"{stem}_v{i}{suffix}"
+            if not cand.exists():
+                dst = cand
+                break
+            i += 1
+    try:
+        _ = shutil.move(str(src), str(dst))
+        moved.append(dst)
+    except OSError as exc:
+        print(
+            f"Warning: could not rename {src} → {dst}: {exc}",
+            file=sys.stderr,
+        )
+
+
+def _rename_v3_to_v3plus(
+    arena_dir: Path,
+    settings: dict[str, object],
+    moved: list[Path],
+) -> None:
+    """Rename v3 flat filenames (``arena.txt``, ``compare.{ext}``) to v3+ names.
+
+    v3 → v3+ mapping (defaults; the actual stems come from settings):
+
+    ===================  ============================  ====================
+    Old (v3)             New (v3+, default)            Role
+    ===================  ============================  ====================
+    ``arena.txt``        ``context.{ext}``              aggregate
+    ``compare.md``       ``arena.md``                  compare (md format)
+    ``compare.txt``      ``arena.txt``                  compare (txt format)
+    ===================  ============================  ====================
+
+    The extension on the new compare/aggregate comes from ``output_format`` via
+    :func:`core.settings.aggregate_filename` and
+    :func:`core.settings.compare_filename`.
+
+    Order matters: ``arena.txt`` (old aggregate) is renamed FIRST so it frees
+    the ``arena.txt`` slot for ``compare.txt`` (old compare) when
+    ``output_format="txt"`` (where the new compare happens to be named
+    ``arena.txt`` too).
+
+    Stale ``compare.<other_ext>`` files (e.g. ``compare.md`` left over from a
+    previous md-format run after switching to txt) are intentionally left
+    alone — they belong to an older format and would otherwise overwrite the
+    freshly-migrated ``arena.<ext>``. Users can clean them up manually.
+    """
+    from core.settings import aggregate_filename, compare_filename
+
+    new_aggregate_name = aggregate_filename(settings)  # e.g. context.md
+    new_compare_name = compare_filename(settings)      # e.g. arena.md
+    new_ext = new_compare_name.rsplit(".", 1)[-1].lower()  # "md" or "txt"
+
+    # 1. Old aggregate (always ``arena.txt`` in v3) → new aggregate
+    old_aggregate = arena_dir / "arena.txt"
+    new_aggregate_path = arena_dir / new_aggregate_name
+    if old_aggregate.is_file():
+        _rename_with_collision(old_aggregate, new_aggregate_path, moved)
+
+    # 2. Old compare (``compare.md`` / ``compare.txt``) → new compare
+    # Only rename the extension that matches the current ``output_format`` —
+    # the other one is a stale orphan from a previous format.
+    for old_ext in ("md", "txt"):
+        if old_ext != new_ext:
+            continue
+        old_compare = arena_dir / f"compare.{old_ext}"
+        if not old_compare.is_file():
+            continue
+        new_compare_path = arena_dir / new_compare_name
+        _rename_with_collision(old_compare, new_compare_path, moved)
+
+
 def _flatten_answers(arena_dir: Path, moved: list[Path]) -> None:
     """Move ``<arena_dir>/answers/A.txt`` (etc.) up to ``<arena_dir>/A.txt``.
 
@@ -934,38 +1037,53 @@ def _prune_empty_subdirs(arena_dir: Path) -> None:
 
 
 def migrate_to_flat_layout(
-    output_dir: Path, dry_run: bool = False
+    output_dir: Path,
+    dry_run: bool = False,
+    settings: dict[str, object] | None = None,
 ) -> list[Path]:
-    """Migrate from the v2 per-file-folder layout to the v3 flat layout.
+    """Migrate from the v2 per-file-folder layout to the v3+ flat layout.
 
-    v2 (per-file-folder):
+    Phase 1 — v2 → v3 flat (flatten subfolders into the arena root):
+
         <output>/arenas/<NNN>-<name>/
-            arena/arena.txt
-            compare/compare.md (or .txt)
-            answers/A.txt, B.txt, prompt.txt
-            answers/ARCHIVE/  (preserved as-is)
+            arena/arena.txt       ─→  arena.txt
+            compare/compare.md    ─→  compare.md
+            compare/compare.txt   ─→  compare.txt
+            answers/A.txt         ─→  A.txt
+            answers/prompt.txt    ─→  prompt.txt
+            answers/ARCHIVE/      (preserved as-is)
 
-    v3 (flat):
-        <output>/arenas/<NNN>-<name>/
-            arena.txt
-            compare.md (or .txt)
-            A.txt, B.txt, prompt.txt
-            <input>.txt     (the copied input file)
-            ARCHIVE/        (preserved as-is)
+    Phase 2 — v3 → v3+ rename (semantic filename cleanup):
 
-    Also flattens the legacy root-level models/ dir if it ever existed
-    (already handled by ``migrate_old_outputs`` — kept here for parity).
+        arena.txt              ─→  context.{ext}     (aggregate)
+        compare.{ext}          ─→  arena.{ext}       (compare)
+
+    The extension on the new compare/aggregate comes from the user's
+    ``output_format`` setting (``md`` or ``txt``), resolved via
+    :func:`core.settings.aggregate_filename` and
+    :func:`core.settings.compare_filename`. The phase-2 rename is idempotent:
+    a re-run on a fully v3+ arena is a no-op.
 
     Args:
         output_dir: Resolved output directory (e.g. ``context_output/``).
         dry_run: If True, only report what *would* move; make no changes.
+        settings: Effective settings dict used to resolve the new aggregate /
+            compare filenames. When ``None``, defaults are used
+            (``context.md`` / ``arena.md``). Pass the live settings from
+            :func:`core.settings.load_settings` to honour the user's
+            ``output_format`` and any custom ``aggregate_filename`` /
+            ``compare_filename`` overrides.
 
     Returns:
-        List of paths that were created by the migration.
+        List of paths that were created by the migration (phase 1 only —
+        phase 2 rename destinations are reported by :func:`_plan_flatten`
+        but not appended to ``moved`` in dry-run mode for stability of the
+        existing print log).
     """
     if not output_dir.is_dir():
         return []
 
+    eff_settings: dict[str, object] = settings or {}
     moved: list[Path] = []
 
     arenas_dir = output_dir / "arenas"
@@ -975,25 +1093,34 @@ def migrate_to_flat_layout(
                 continue
             if dry_run:
                 # Compute what would move without actually moving.
-                planned = _plan_flatten(arena_dir)
+                planned = _plan_flatten(arena_dir, eff_settings)
                 moved.extend(planned)
             else:
+                # Phase 1: v2 → v3 flat (subfolder → arena root).
                 for sub, fname in _FLAT_LAYOUT_SOURCES:
                     _move_up_flat(arena_dir, sub, fname, moved)
                 _flatten_answers(arena_dir, moved)
                 _prune_empty_subdirs(arena_dir)
+                # Phase 2: v3 → v3+ rename (arena.txt → context.{ext},
+                # compare.{ext} → arena.{ext}). Done after phase 1 so the
+                # just-flattened arena.txt / compare.{ext} files are renamed.
+                _rename_v3_to_v3plus(arena_dir, eff_settings, moved)
 
     if moved and not dry_run:
         rels = ", ".join(str(p.relative_to(output_dir)) for p in moved[:10])
         suffix = " ..." if len(moved) > 10 else ""
-        print(f"Flattened v2→v3 layout: {rels}{suffix}")
+        print(f"Flattened v2→v3+ layout: {rels}{suffix}")
     return moved
 
 
-def _plan_flatten(arena_dir: Path) -> list[Path]:
+def _plan_flatten(
+    arena_dir: Path, settings: dict[str, object] | None = None
+) -> list[Path]:
     """Compute (without applying) the list of files that ``migrate_to_flat_layout``
-    *would* move out of the v2 subfolders into the arena root.
+    *would* move out of the v2 subfolders into the arena root, plus the v3 →
+    v3+ rename destinations.
     """
+    eff_settings: dict[str, object] = settings or {}
     planned: list[Path] = []
     for sub, fname in _FLAT_LAYOUT_SOURCES:
         src = arena_dir / sub / fname
@@ -1008,4 +1135,36 @@ def _plan_flatten(arena_dir: Path) -> list[Path]:
         for f in answers_dir.iterdir():
             if f.is_file() and re.match(r"^[A-Z]_NOTES\.(md|txt)$", f.name):
                 planned.append(arena_dir / f.name)
+    # Phase 2 rename destinations (used by dry-run for visibility).
+    planned.extend(_plan_v3_to_v3plus_rename(arena_dir, eff_settings))
+    return planned
+
+
+def _plan_v3_to_v3plus_rename(
+    arena_dir: Path, settings: dict[str, object]
+) -> list[Path]:
+    """Plan v3 → v3+ rename destinations without applying them.
+
+    Mirrors :func:`_rename_v3_to_v3plus` so ``dry_run`` accurately reports
+    what *would* be renamed. Stale-ext compare files are intentionally
+    skipped here too (matching the apply-side filter).
+    """
+    from core.settings import aggregate_filename, compare_filename
+
+    planned: list[Path] = []
+    new_aggregate_name = aggregate_filename(settings)
+    new_compare_name = compare_filename(settings)
+    new_ext = new_compare_name.rsplit(".", 1)[-1].lower()
+
+    old_aggregate = arena_dir / "arena.txt"
+    if old_aggregate.is_file() and old_aggregate.name != new_aggregate_name:
+        planned.append(arena_dir / new_aggregate_name)
+
+    for old_ext in ("md", "txt"):
+        if old_ext != new_ext:
+            continue
+        old_compare = arena_dir / f"compare.{old_ext}"
+        if old_compare.is_file() and old_compare.name != new_compare_name:
+            planned.append(arena_dir / new_compare_name)
+
     return planned

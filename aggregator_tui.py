@@ -41,8 +41,15 @@ from core.parser import (  # noqa: E402
     read_file_paths,
     should_ignore,
 )
+from core.arena import arena_filenames, arena_model_filename  # noqa: E402
 from core.counter import count_tokens
-from core.judge import collect_model_responses, build_compare_markdown
+from core.judge import (
+    archive_model_responses,
+    build_compare_markdown,
+    collect_model_responses,
+    ensure_model_templates,
+    generate_compare_template,
+)
 
 _FILES_TXT = _PROJECT_DIR / "files.txt"
 _ENV_FILE = _PROJECT_DIR / ".env"
@@ -540,15 +547,19 @@ class AggregatorTUI(App[None]):
 
             # Resolve arena directory
             from core.parser import load_settings, resolve_output_dir, resolve_arena_dir
-            from core.parser import migrate_to_per_file_folders
+            from core.parser import migrate_to_per_file_folders, migrate_to_flat_layout
             settings = load_settings(resolved_root)
             output_dir = resolve_output_dir(resolved_root, settings)
-            # Reorganize flat outputs into per-file folders (v2 layout).
+            output_format = str(settings.get("output_format", "md"))
+            # Flatten v2 → v3+ layout (idempotent if already flat).
             migrate_to_per_file_folders(output_dir)
+            migrate_to_flat_layout(output_dir, settings=settings)
             arena_dir = resolve_arena_dir(output_dir, _FILES_TXT.stem)
-            
-            # Per-file folder layout: each output file in its own folder.
-            arena_txt = arena_dir / "arena" / "arena.txt"
+
+            # v3-prefixed flat layout: every file lives directly in
+            # arena_dir and carries the arena's NNN- prefix.
+            filenames = arena_filenames(arena_dir, output_format)
+            arena_path = filenames["context"]
             structure_txt = output_dir / "structure" / "structure.txt"
 
             if root:
@@ -559,18 +570,15 @@ class AggregatorTUI(App[None]):
                 self.log_message(f"[ok] structure written to {structure_txt.name}", "success")
 
             entries = read_file_entries(_FILES_TXT)
-            aggregate_files(entries, arena_txt, root)
-            self.log_message(f"[ok] arena written ({len(paths)} file(s)) to {arena_txt.name}.", "success")
+            aggregate_files(entries, arena_path, root)
+            self.log_message(f"[ok] arena written ({len(paths)} file(s)) to {arena_path.name}.", "success")
 
-            # Resolve and initialize local answers directory
-            answers_dir = arena_dir / "answers"
-            answers_dir.mkdir(parents=True, exist_ok=True)
-            prompt_file = answers_dir / "prompt.txt"
+            # v3-prefixed flat layout: prompt/A/B live directly in arena_dir.
+            prompt_file = filenames["prompt"]
             if not prompt_file.exists():
                 prompt_file.touch()
             model_count = settings.get("model_count", 2)
-            from core.judge import ensure_model_templates
-            _ = ensure_model_templates(resolved_root, model_count, answers_dir)
+            _ = ensure_model_templates(arena_dir, model_count)
             
             run_judge = self.query_one("#cb-judge", Checkbox).value
             if run_judge:
@@ -622,39 +630,38 @@ class AggregatorTUI(App[None]):
             resolved_root = root or self._detect_root() or _PROJECT_DIR
             settings = load_settings(resolved_root)
             output_format = settings.get("output_format", "md")
-            answers_dir = arena_dir / "answers"
+            filenames = arena_filenames(arena_dir, output_format)
+            compare_file = filenames["arena"]
 
-            prompt, models_data = collect_model_responses(resolved_root, output_format, answers_dir)
+            model_count = settings.get("model_count", 2)
+            prompt, models_data = collect_model_responses(
+                arena_dir, output_format, model_count
+            )
             if not models_data:
-                self.log_message("[judge] No model responses found in answers/ directory.", "warning")
-                compare_file = arena_dir / f"compare.{output_format}"
-                from core.judge import generate_compare_template
-                model_count = settings.get("model_count", 2)
+                self.log_message(
+                    f"[judge] No model responses found in {arena_dir.name}/ directory.", "warning"
+                )
                 generate_compare_template(compare_file, model_count)
                 self.log_message(f"[ok] Blank template written to {compare_file.name}.", "success")
                 return
-                
+
             self.log_message(f"[judge] Found {len(models_data)} models. Requesting Gemini evaluation...", "action")
             from core.judge import GeminiJudge
             judge = GeminiJudge()
             verdict = await judge.evaluate(prompt, models_data, api_key)
-            
+
             compact = self.query_one("#cb-compact", Checkbox).value
-            compare_file = arena_dir / f"compare.{output_format}"
-            
+
             build_compare_markdown(prompt, models_data, compare_file, verdict=verdict, compact=compact)
-            
+
             # --- Req 5: archiving workflow (local to this arena) ---
             archive = settings.get("archive", False)
             if archive:
                 self.log_message("[judge] Archiving model responses …", "action")
                 archive_dir = str(settings.get("archive_dir", "ARCHIVE"))
-                from core.judge import archive_model_responses
-                archived = archive_model_responses(resolved_root, archive_dir, answers_dir)
+                archived = archive_model_responses(arena_dir, archive_dir)
                 if archived:
-                    model_count = settings.get("model_count", 2)
-                    from core.judge import ensure_model_templates
-                    ensure_model_templates(resolved_root, model_count, answers_dir)
+                    ensure_model_templates(arena_dir, model_count)
                     self.log_message(f"[ok] Archived responses to {archive_dir}.", "success")
 
             self.log_message(f"[ok] AI Judge evaluation written to {compare_file.name}.", "success")

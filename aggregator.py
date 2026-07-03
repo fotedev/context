@@ -2,9 +2,12 @@
 """File Aggregator — consolidates source files and generates project trees.
 
 Outputs (written into the configurable output folder, e.g. ``context_output/``):
-    arena.txt     — all file contents with relative-path headers
-    structure.txt — visual directory tree of the detected project root
-    compare.md    — LMArena-style model comparison (Gemini judge or template)
+    context.{md,txt} — all file contents with relative-path headers (the LLM context)
+    structure.txt    — visual directory tree of the detected project root
+    arena.{md,txt}   — LMArena-style model comparison (Gemini judge or template)
+
+The aggregate filename (``aggregate_filename``) and compare filename
+(``compare_filename``) are settings; the extension follows ``output_format``.
 
 Configuration precedence (Req 4):
     Command Line Flags > Interactive Prompts (--interactive) >
@@ -62,6 +65,7 @@ from core.judge import (
     ensure_model_templates,
     GeminiJudge,
 )
+from core.arena import arena_filenames, arena_model_filename
 
 # ---------------------------------------------------------------------------
 # Interactive prompt helper (Req 4)
@@ -201,6 +205,9 @@ def _prompt_update_structure(prompt: str) -> bool:
 
 _LEGACY_OUTPUT_NAMES = {
     "arena.txt",
+    "arena.md",
+    "context.txt",
+    "context.md",
     "structure.txt",
     "compare.md",
     "compare.txt",
@@ -208,19 +215,21 @@ _LEGACY_OUTPUT_NAMES = {
 
 
 def _output_names(suffix: str, output_format: str) -> tuple[str, str, str]:
-    """Build the (arena, structure, compare) filenames for a given suffix.
+    """Build the (aggregate, structure, compare) filenames for a given suffix.
 
     Args:
         suffix: Output suffix (``""`` for files.txt, ``"_1"`` for files_1.txt).
         output_format: ``"md"`` or ``"txt"`` — sets compare extension.
 
     Returns:
-        Tuple of (arena_filename, structure_filename, compare_filename).
+        Tuple of (aggregate_filename, structure_filename, compare_filename).
     """
-    arena = f"arena{suffix}.txt"
+    # v3+ rename: ``arena.txt`` is now the LMArena compare file (when
+    # ``output_format="txt"``); the aggregate lives in ``context.{ext}``.
+    aggregate = f"context{suffix}.{output_format}"
     structure = f"structure{suffix}.txt"
-    compare = f"compare{suffix}.{output_format}"
-    return arena, structure, compare
+    compare = f"arena{suffix}.{output_format}"
+    return aggregate, structure, compare
 
 
 # ---------------------------------------------------------------------------
@@ -239,14 +248,24 @@ def _process_one(
     compact_mode: bool,
     model_count: int,
     preferred_number: int | None = None,
+    settings: dict[str, object] | None = None,
 ) -> None:
-    """Process a single files*.txt input → flat outputs in the arena directory (v3 layout).
+    """Process a single input → v3-prefixed flat outputs in the arena directory.
 
-    v3 flat layout: ``arena.txt``, ``compare.md``, ``A.txt``, ``B.txt``,
-    ``prompt.txt`` all live directly inside ``context_output/arenas/NNN-<name>/``
-    (no ``arena/``, ``compare/``, ``answers/`` subfolders). The input
-    ``files.txt`` is also copied into the arena directory so each arena is
-    self-contained.
+    v3+ prefixed flat layout: every file inside the arena directory
+    carries the same ``NNN-`` prefix as the folder name. For example::
+
+        003-Hero/
+        ├── 003-Hero.txt       ← input (self-contained copy)
+        ├── 003-context.md     ← aggregate source code
+        ├── 003-arena.md       ← LMArena comparison
+        ├── 003-A.txt          ← Model A response
+        ├── 003-B.txt          ← Model B response
+        ├── 003-prompt.txt     ← Prompt sent to models
+        └── 003-A_NOTES.md     ← (optional) Notes for Model A
+
+    The prefix on every file (not just the folder) solves a tab-disambiguation
+    problem when the user has multiple arenas open simultaneously.
 
     Args:
         files_txt: Path to the input files listing.
@@ -259,21 +278,29 @@ def _process_one(
         compact_mode: Whether to use compact compare output.
         model_count: Number of model response files to create.
         preferred_number: Optional explicit arena number from the
-            ``# Target Arena:`` directive.  Forwarded to
+            ``# Target Arena:`` directive. Forwarded to
             :func:`resolve_arena_dir`.
+        settings: Effective settings dict (kept for symmetry with the
+            legacy signature; arena filenames are now computed via
+            :func:`arena_filenames`).
     """
     import shutil as _shutil
 
     arena_dir = resolve_arena_dir(output_dir, arena_name, preferred_number=preferred_number)
     arena_dir.mkdir(parents=True, exist_ok=True)
 
-    # v3 flat output paths — every file lives directly in arena_dir.
-    arena_path = arena_dir / "arena.txt"
-    compare_path = arena_dir / f"compare.{output_format}"
+    # v3+ prefixed output paths — every file lives directly in arena_dir
+    # and carries the arena's NNN- prefix. Filenames honour ``output_format``
+    # for context/arena extensions.
+    filenames = arena_filenames(arena_dir, output_format)
+    arena_path = filenames["context"]
+    compare_path = filenames["arena"]
+    prompt_file = filenames["prompt"]
+    target_input_path = filenames["input"]
 
-    # Copy input file into arena_dir so the arena is self-contained.
-    target_input_path = arena_dir / files_txt.name
-    if files_txt.parent.resolve() != arena_dir.resolve() and not target_input_path.exists():
+    # Copy input file into arena_dir (renamed to the prefixed name if
+    # needed) so the arena is self-contained.
+    if files_txt.resolve() != target_input_path.resolve() and not target_input_path.exists():
         try:
             _shutil.copy2(str(files_txt), str(target_input_path))
             print(f"[{files_txt.name}] Copied input → {target_input_path}")
@@ -284,11 +311,10 @@ def _process_one(
             )
 
     # Ensure flat prompt.txt + A.txt/B.txt/... templates exist in arena_dir.
-    prompt_file = arena_dir / "prompt.txt"
     if not prompt_file.exists():
         _ = prompt_file.touch()
         print(f"[{files_txt.name}] Created {prompt_file}")
-    ensure_model_templates(root or Path.cwd(), model_count, arena_dir)
+    ensure_model_templates(arena_dir, model_count)
 
     # Read entries. Missing file → empty list (EC1: still emit empty outputs).
     try:
@@ -344,7 +370,7 @@ def _process_one(
 
     # 4. Compare output from arena_dir flat model files (or llm.txt fallback).
     prompt, models_data = collect_model_responses(
-        root, output_format, arena_dir, model_count
+        arena_dir, output_format, model_count
     )
     if models_data:
         verdict: str | None = None
@@ -570,8 +596,11 @@ def main() -> None:
     # --- Wrap any flat outputs into per-file folders (v2 layout) --------
     _ = migrate_to_per_file_folders(output_dir)
     # --- Flatten per-file folders into the v3 truly-flat layout ---------
-    # Safe to run every time: idempotent on already-flat trees.
-    _ = migrate_to_flat_layout(output_dir)
+    # Safe to run every time: idempotent on already-flat trees. Pass
+    # ``settings`` so phase-2 renames (arena.txt → context.{ext},
+    # compare.{ext} → arena.{ext}) honour the user's output_format and
+    # aggregate_filename / compare_filename settings.
+    _ = migrate_to_flat_layout(output_dir, settings=settings)
 
     # --- Initialize environment (files.txt) ---------
     initialize_environment(init_root, model_count, output_dir)
@@ -580,6 +609,9 @@ def main() -> None:
     any_old = (
         any((output_dir / name).is_file() for name in _LEGACY_OUTPUT_NAMES)
         or any(output_dir.glob("arena_*.txt"))
+        or any(output_dir.glob("arena_*.md"))
+        or any(output_dir.glob("context_*.txt"))
+        or any(output_dir.glob("context_*.md"))
         or any(output_dir.glob("structure_*.txt"))
     )
     if any_old and is_interactive:
@@ -702,16 +734,15 @@ def main() -> None:
                 compact_mode=compact_mode,
                 model_count=model_count,
                 preferred_number=preferred,
+                settings=settings,
             )
             # --- Req 5: archiving workflow (local to each arena) -----------------
             if archive:
                 arena_dir = resolve_arena_dir(output_dir, arena_name, preferred_number=preferred)
-                archived = archive_model_responses(
-                    root or Path.cwd(), archive_dir, arena_dir,
-                )
+                archived = archive_model_responses(arena_dir, archive_dir)
                 if archived:
                     # Re-create fresh templates for the configured model count.
-                    _ = ensure_model_templates(root or Path.cwd(), model_count, arena_dir)
+                    _ = ensure_model_templates(arena_dir, model_count)
                     print(f"[{files_input.name}] Archived {len(archived)} file(s) to {archive_dir}.")
         except Exception as exc:  # pylint: disable=broad-exception-caught  # noqa: BLE001 — last-resort guard per file
             print(

@@ -225,6 +225,54 @@ def build_arena_plan(
 
 
 # ---------------------------------------------------------------------------
+# Prefixed filename helpers (v3+ flat layout — every file carries the prefix)
+# ---------------------------------------------------------------------------
+
+
+def arena_filenames(arena_dir: Path, output_format: str = "md") -> dict[str, Path]:
+    """Compute the canonical prefixed filenames for all files inside an arena dir.
+
+    For an arena folder ``NNN-<ArenaName>/``, the v3+ flat layout puts every
+    file — input, outputs, and model responses — directly inside the folder,
+    each carrying the same ``NNN-`` prefix. This helper centralises that
+    naming so callers never construct filenames by hand.
+
+    Args:
+        arena_dir: Resolved arena directory (e.g. ``.../arenas/003-Hero``).
+        output_format: ``"md"`` or ``"txt"`` — controls the extension on
+            ``context`` and ``arena`` outputs.
+
+    Returns:
+        Dict with keys ``input``, ``context``, ``arena``, ``prompt``.
+        Model-response filenames (``003-A.txt``, etc.) are computed by
+        :func:`arena_model_filename` instead, since their count is
+        configurable.
+    """
+    prefix, _, name = arena_dir.name.partition("-")
+    ext = output_format if output_format in ("md", "txt") else "md"
+    return {
+        "input": arena_dir / f"{prefix}-{name}.txt",
+        "context": arena_dir / f"{prefix}-context.{ext}",
+        "arena": arena_dir / f"{prefix}-arena.{ext}",
+        "prompt": arena_dir / f"{prefix}-prompt.txt",
+    }
+
+
+def arena_model_filename(arena_dir: Path, letter: str) -> Path:
+    """Compute the prefixed model-response filename, e.g. ``003-A.txt``.
+
+    Args:
+        arena_dir: Resolved arena directory (its name must start with ``NNN-``).
+        letter: Model letter (``"A"``, ``"B"``, ``"C"``, ...).
+
+    Returns:
+        Full path to the prefixed model-response file inside *arena_dir*.
+    """
+    prefix = arena_dir.name.partition("-")[0]
+    return arena_dir / f"{prefix}-{letter}.txt"
+
+
+# ---------------------------------------------------------------------------
 # Output directory resolution (Req 1) — arena-specific subdirectory helper
 # ---------------------------------------------------------------------------
 

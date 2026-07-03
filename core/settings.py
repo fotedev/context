@@ -88,14 +88,20 @@ context_output
 .context
 files.txt
 arena.txt
+arena.md
+context.txt
+context.md
 structure.txt
 llm.txt
 compare.md
 compare.txt
 compare_*.md
 compare_*.txt
+context_*.md
+context_*.txt
 files_*.txt
 arena_*.txt
+arena_*.md
 structure_*.txt
 models
 models/old
@@ -269,6 +275,46 @@ def display_settings(root: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Output filename resolution (v3+ — context.<ext> and arena.<ext>)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_ext(settings: dict[str, object]) -> str:
+    """Return the canonical output extension from settings.
+
+    ``output_format`` is ``"md"`` or ``"txt"``. Anything else collapses to
+    ``"md"`` so callers can always build a valid filename.
+
+    The v3+ layout hard-codes the *stems* (``context`` and ``arena``) and
+    derives only the extension from ``output_format``. There is no separate
+    ``aggregate_filename`` / ``compare_filename`` setting — that parallel
+    setting pair was a rejected intermediate design and the user settled on
+    reusing ``output_format``.
+    """
+    fmt = str(settings.get("output_format", "md")).lower().lstrip(".")
+    return "txt" if fmt == "txt" else "md"
+
+
+def aggregate_filename(settings: dict[str, object]) -> str:
+    """Return the v3+ aggregate-output filename: ``context.<ext>``.
+
+    The aggregated source-code file lives inside each arena directory and is
+    fed into LMArena as the prompt context. Stem is hard-coded; extension
+    follows ``output_format``.
+    """
+    return f"context.{_resolve_ext(settings)}"
+
+
+def compare_filename(settings: dict[str, object]) -> str:
+    """Return the v3+ compare-output filename: ``arena.<ext>``.
+
+    The LMArena comparison file is the actual "arena" where models are
+    ranked. Stem is hard-coded; extension follows ``output_format``.
+    """
+    return f"arena.{_resolve_ext(settings)}"
+
+
+# ---------------------------------------------------------------------------
 # Paste-attachments archival (long-text paste → smart-named copy in output)
 # ---------------------------------------------------------------------------
 
@@ -349,10 +395,16 @@ def _migrate_settings_file(root: Path, merged: dict[str, object]) -> None:
 
     Preserves every existing user value; only adds keys that were not present.
     Idempotent — a second call writes nothing because ``missing`` becomes empty.
-    Also removes the deprecated ``inputs_dir`` key from legacy files so the
-    JSON doesn't carry dead config after the flat-layout refactor.
+    Also removes deprecated keys (``inputs_dir``, plus the rejected
+    ``aggregate_filename`` / ``compare_filename`` pair) from legacy files so
+    the JSON doesn't carry dead config.
     """
-    deprecated_keys = {"inputs_dir"}
+    deprecated_keys = {
+        "inputs_dir",
+        # Rejected intermediate-design keys (settled on output_format only).
+        "aggregate_filename",
+        "compare_filename",
+    }
     new_keys = {
         "paste_attachments_enabled",
         "paste_attachments_source_dir",

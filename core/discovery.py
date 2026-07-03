@@ -57,14 +57,20 @@ _DEFAULT_IGNORE: frozenset[str] = frozenset(
         ".DS_Store",
         "files.txt",
         "arena.txt",
+        "arena.md",
+        "context.txt",
+        "context.md",
         "structure.txt",
         "llm.txt",
         "compare.md",
         "compare.txt",
         "compare_*.md",
         "compare_*.txt",
+        "context_*.txt",
+        "context_*.md",
         "files_*.txt",
         "arena_*.txt",
+        "arena_*.md",
         "structure_*.txt",
         "models",
         ".pnpm-store",
@@ -185,51 +191,114 @@ def should_ignore(path: Path, root: Path, patterns: frozenset[str]) -> bool:
 def discover_files_txt(
     cwd: Path, root: Path | None = None, settings: dict[str, object] | None = None
 ) -> list[tuple[Path, str]]:
-    """Discover input files and return (file_path, arena_name) tuples.
+    """Discover input files across v3 arena dirs + legacy locations.
 
-    Primary: root/.context/inputs/*.txt
-    Fallback: cwd/files.txt and cwd/files_*.txt
+    Returns ``(file_path, arena_name)`` tuples. Results are deduplicated by
+    resolved path so a file is never processed twice even if it matches
+    multiple discovery tiers.
 
-    The arena name is always derived from the filename (source of truth).
+    Three tiers are scanned, in order, and **all** are merged into the
+    returned list (no short-circuit). Each tier is guarded by a
+    non-empty-file check so an empty legacy file never blocks the next
+    tier from running:
+
+    1. **v3 arena-dir scan** (primary, prefix-aware) — for every
+       ``NNN-<name>/`` directory under ``<root>/<output_dir>/arenas/``,
+       the input file is matched **exactly** as
+       ``<prefix>-<arena_name>.txt``. Generic "first non-reserved .txt"
+       matching was deliberately rejected here — that approach was fragile
+       and caused bugs earlier in this project's history (it could pick up
+       stale ``compare.md`` orphans, NOTES files, or unprefixed legacy
+       files).
+    2. **Legacy ``.context/inputs/*.txt``** (v1 style, recursive). Each
+       file becomes one arena; the arena name is derived from the file's
+       relative path under ``inputs_dir`` (e.g. ``UI/AdminPage.txt`` →
+       ``UI-AdminPage``).
+    3. **Legacy CWD ``files.txt`` / ``files_*.txt``** (oldest style).
+       Skipped entirely when the file is missing or empty — this is the
+       bug that previously prevented Tier 1 from running when an empty
+       root-level ``files.txt`` existed.
+
     The optional ``# Target Arena:`` directive is parsed lazily by callers
     via :func:`build_arena_plan` (passing a directive lookup built with
-    :func:`_safe_read_directive`) so the legacy call sites keep their
-    simple ``(Path, str)`` shape.
+    :func:`_safe_read_directive`) so the call sites keep their simple
+    ``(Path, str)`` shape.
     """
     results: list[tuple[Path, str]] = []
+    seen_paths: set[Path] = set()
 
+    def _add(path: Path, name: str) -> None:
+        resolved = path.resolve()
+        if resolved in seen_paths:
+            return
+        seen_paths.add(resolved)
+        results.append((path, name))
+
+    # --- Tier 1: v3 arena-dir scan (primary, prefix-aware exact match) -----
     if root and settings:
-        inputs_dir_str = cast(str, settings.get("inputs_dir", ".context/inputs"))
+        output_dir_str = str(settings.get("output_dir", "context_output"))
+        arenas_dir = root / output_dir_str / "arenas"
+
+        if arenas_dir.is_dir():
+            for arena_dir in sorted(arenas_dir.iterdir()):
+                if not arena_dir.is_dir() or "-" not in arena_dir.name:
+                    continue
+                prefix, _, arena_name = arena_dir.name.partition("-")
+                if not prefix.isdigit() or not arena_name:
+                    continue
+
+                # Exact expected filename derived from the arena dir name.
+                # No "first non-reserved .txt" heuristics — see docstring.
+                expected_input = arena_dir / f"{prefix}-{arena_name}.txt"
+                if expected_input.is_file() and expected_input.stat().st_size > 0:
+                    _add(expected_input, arena_name)
+
+    # --- Tier 2: legacy .context/inputs/ (v1 style) -----------------------
+    if root and settings:
+        inputs_dir_str = str(settings.get("inputs_dir", ".context/inputs"))
         inputs_dir = root / inputs_dir_str
-
         if inputs_dir.is_dir():
-            # Use rglob to recursively scan all subdirectories for *.txt files
             for p in sorted(inputs_dir.rglob("*.txt")):
-                if p.is_file():
-                    try:
-                        rel_path = p.relative_to(inputs_dir)
-                        # Build a flat arena name: e.g. UI/AdminPage.txt -> UI-AdminPage
-                        parts = list(rel_path.parent.parts) + [rel_path.stem]
-                        # Filter out empty or '.' parts to handle files at the root of inputs_dir
-                        parts = [part for part in parts if part and part != '.']
-                        arena_name = "-".join(parts)
-                    except ValueError:
-                        arena_name = p.stem
-                    results.append((p, arena_name))
-            if results:
-                return results
+                if not p.is_file() or p.stat().st_size == 0:
+                    continue
+                try:
+                    rel_path = p.relative_to(inputs_dir)
+                    parts = list(rel_path.parent.parts) + [rel_path.stem]
+                    parts = [part for part in parts if part and part != "."]
+                    arena_name = "-".join(parts)
+                except ValueError:
+                    arena_name = p.stem
+                _add(p, arena_name)
 
-    # Fallback to CWD
+    # --- Tier 3: legacy CWD files.txt / files_*.txt (oldest style) -------
     main = cwd / "files.txt"
-    if main.is_file():
-        results.append((main, "files"))
+    if main.is_file() and main.stat().st_size > 0:
+        _add(main, "files")
 
     for p in sorted(cwd.glob("files_*.txt")):
-        if p.is_file():
-            suffix = p.name[len("files_") : -len(".txt")]
-            results.append((p, f"files_{suffix}"))
+        if p.is_file() and p.stat().st_size > 0:
+            suffix = p.name[len("files_"):-len(".txt")]
+            _add(p, f"files_{suffix}")
 
     return results
+
+
+def _discover_files_txt_in_arenas(
+    root: Path, settings: dict[str, object]
+) -> list[tuple[Path, str]]:
+    """Legacy v3 fallback helper — superseded by Tier 1 of :func:`discover_files_txt`.
+
+    Kept as a no-op stub for any external code that imported it
+    directly. New code should rely on :func:`discover_files_txt` (which
+    folds the v3 arena-dir scan into its Tier 1 with prefix-aware exact
+    matching — this older "first non-reserved .txt" heuristic was
+    intentionally removed because it could pick up stale ``compare.md``
+    orphans, NOTES files, or unprefixed legacy inputs).
+
+    Returns:
+        Empty list. Use :func:`discover_files_txt` instead.
+    """
+    return []
 
 
 def discover_files_txt_with_directives(

@@ -22,3 +22,4 @@ aggregator_tui.py.log
 /.context/inputs
 __init__.py.log
 ARCHIVE*
+/full-chat.txt

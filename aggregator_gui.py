@@ -59,6 +59,7 @@ from core.parser import (  # pyright: ignore[reportAttributeAccessIssue, reportM
     ArenaAssignment,
     ArenaDirective,
 )
+from core.arena import arena_filenames, arena_model_filename  # pyright: ignore[reportMissingImports]
 from core.counter import count_tokens  # pyright: ignore[reportAttributeAccessIssue, reportMissingImports]
 from core.judge import (  # pyright: ignore[reportAttributeAccessIssue, reportMissingImports]
     build_compare_markdown,
@@ -1194,10 +1195,12 @@ class AggregatorGUI(tk.Tk):
                     else None
                 )
                 arena_dir = resolve_arena_dir(output_dir, arena_name, preferred_number=preferred)
-                # Per-file folder layout: each output file in its own folder.
-                arena_path = arena_dir / "arena" / "arena.txt"
+                # v3-prefixed flat layout: every file lives directly in
+                # arena_dir and carries the arena's NNN- prefix.
+                filenames = arena_filenames(arena_dir, output_format)
+                arena_path = filenames["context"]
                 structure_path = output_dir / "structure" / "structure.txt"
-                compare_path = arena_dir / "compare" / f"compare.{output_format}"
+                compare_path = filenames["arena"]
 
                 # Writable checks (fail fast)
                 for out_path in (arena_path, structure_path, compare_path):
@@ -1258,15 +1261,16 @@ class AggregatorGUI(tk.Tk):
                     self._log_write(f"[{files_input.name}] Token count warning: {exc}", tag="warn")
 
                 # ── Step 5: Collect model responses ──────────────────────────
-                answers_dir = arena_dir / "answers"
-                answers_dir.mkdir(parents=True, exist_ok=True)
-                prompt_file = answers_dir / "prompt.txt"
+                # v3-prefixed flat layout: prompt/A/B live directly in arena_dir.
+                prompt_file = filenames["prompt"]
                 if not prompt_file.exists():
                     _ = prompt_file.touch()
                     self._log_write(f"[{files_input.name}] Created {prompt_file.name}", tag="ok")
-                ensure_model_templates(root, model_count, answers_dir)
+                ensure_model_templates(arena_dir, model_count)
 
-                prompt, models_data = collect_model_responses(root, output_format, answers_dir)
+                prompt, models_data = collect_model_responses(
+                    arena_dir, output_format, model_count
+                )
 
                 if not models_data:
                     generate_compare_template(compare_path, model_count)
@@ -1278,7 +1282,7 @@ class AggregatorGUI(tk.Tk):
                     continue
 
                 self._log_write(
-                    f"[{files_input.name}] Found {len(models_data)} model response(s) in answers/", tag="ok"
+                    f"[{files_input.name}] Found {len(models_data)} model response(s) in {arena_dir.name}/", tag="ok"
                 )
 
                 # ── Step 6: Gemini AI Judge (optional) ────────────────────────
@@ -1319,10 +1323,10 @@ class AggregatorGUI(tk.Tk):
                     self._step(f"[{files_input.name}] Archiving model responses …")
                     archive_dir = str(settings.get("archive_dir", "ARCHIVE"))
                     archived = archive_model_responses(
-                        root, archive_dir, answers_dir,
+                        arena_dir, archive_dir,
                     )
                     if archived:
-                        ensure_model_templates(root, model_count, answers_dir)
+                        ensure_model_templates(arena_dir, model_count)
                         self._log_write(f"[{files_input.name}] Archived {len(archived)} response(s) to {archive_dir}.", tag="ok")
 
                 processed_count += 1
