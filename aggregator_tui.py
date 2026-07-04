@@ -37,6 +37,7 @@ from core.parser import (  # noqa: E402
     find_project_root,
     generate_tree,
     load_ignore_patterns,
+    load_settings,
     read_file_entries,
     read_file_paths,
     should_ignore,
@@ -385,7 +386,8 @@ class AggregatorTUI(App[None]):
             path_input.value = str(self._manual_root)
         elif not path_input.value:
             path_input.value = str(root)
-        patterns = load_ignore_patterns(root)
+        settings = load_settings(root)
+        patterns = load_ignore_patterns(root, settings)
 
         self._populate_tree(scroll, root, root, patterns)
         self.log_message(f"[tree] Loaded from: {root}", "info")
@@ -543,12 +545,12 @@ class AggregatorTUI(App[None]):
 
             root = find_project_root(paths[0])
             resolved_root = root or self._detect_root() or _PROJECT_DIR
-            patterns = load_ignore_patterns(resolved_root)
 
             # Resolve arena directory
             from core.parser import load_settings, resolve_output_dir, resolve_arena_dir
             from core.parser import migrate_to_per_file_folders, migrate_to_flat_layout
             settings = load_settings(resolved_root)
+            patterns = load_ignore_patterns(resolved_root, settings)
             output_dir = resolve_output_dir(resolved_root, settings)
             output_format = str(settings.get("output_format", "md"))
             # Flatten v2 → v3+ layout (idempotent if already flat).

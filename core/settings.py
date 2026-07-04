@@ -40,6 +40,15 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "respect_target_arena_directive": True,
     "target_arena_directive_prefix": "# Target Arena:",
     "on_arena_number_conflict": "warn_and_shift",
+    # When True (default), the tool auto-creates ``.context/ignore`` with the
+    # built-in default patterns if the file is missing. When False, the tool
+    # leaves ``.context/ignore`` entirely under user control — it will NOT
+    # create, write, or rewrite the file (even if it's missing). The user is
+    # then free to author their own ``.context/ignore``, or have no file at
+    # all (in which case zero patterns are ignored and the full project tree,
+    # including ``.context/`` and ``context_output/``, shows up in
+    # ``structure.txt``).
+    "use_default_ignore": True,
 }
 
 # Template written to .context/ignore when auto-created (Req 8)
@@ -116,30 +125,68 @@ scripts
 # ---------------------------------------------------------------------------
 
 
-def ensure_context_dir(root: Path) -> Path:
-    """Ensure the ``.context/`` directory exists with default config files.
+def ensure_context_dir(
+    root: Path, settings: dict[str, object] | None = None
+) -> Path:
+    """Ensure the ``.context/`` directory exists.
 
-    Creates ``.context/``, ``.context/settings.json``, and ``.context/ignore``
-    if they are missing.  Existing files are never overwritten.
+    Always creates ``.context/`` and ``.context/inputs/``. The
+    ``.context/settings.json`` and ``.context/ignore`` files are NOT
+    auto-created here — they are owned by their respective loaders
+    (:func:`load_settings` and :func:`core.discovery.load_ignore_patterns`)
+    so the ``use_default_ignore`` toggle can be honored.
+
+    The optional *settings* parameter is accepted for API symmetry with
+    future extensions but is currently unused inside this function.
 
     Args:
         root: Project root directory.
+        settings: Optional settings dict (reserved for future use).
 
     Returns:
         Path to the ``.context/`` directory.
     """
+    _ = settings  # reserved for future use
+
     context_dir = root / ".context"
     context_dir.mkdir(parents=True, exist_ok=True)
 
-    # Auto-create settings.json if missing
-    settings_path = context_dir / "settings.json"
-    if not settings_path.is_file():
-        save_settings(root, dict(DEFAULT_SETTINGS))
-        print(
-            f"Created {settings_path} — edit your preferences or delete to reset."
-        )
+    # Auto-create inputs directory if missing
+    inputs_dir = context_dir / "inputs"
+    inputs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Auto-create ignore file if missing or update if it contains the legacy template description
+    return context_dir
+
+
+def write_default_ignore_if_enabled(
+    root: Path, settings: dict[str, object]
+) -> bool:
+    """Write ``.context/ignore`` with the default template ONLY when enabled.
+
+    Respects the ``use_default_ignore`` setting:
+
+    * ``True`` (default) — auto-creates ``.context/ignore`` with the built-in
+      template if the file is missing, and also rewrites it if it still
+      carries the legacy description
+      ("These patterns are ADDITIONAL to the built-in defaults").
+    * ``False`` — leaves ``.context/ignore`` entirely alone: never creates,
+      writes, or overwrites it. The user has full control.
+
+    Args:
+        root: Project root directory.
+        settings: Effective settings dict (must include ``use_default_ignore``).
+
+    Returns:
+        ``True`` if the file was written, ``False`` otherwise.
+    """
+    if not bool(settings.get("use_default_ignore", True)):
+        return False
+
+    context_dir = root / ".context"
+    # Defensive: ensure the parent dir exists (load_settings normally
+    # already calls ensure_context_dir, but stay safe).
+    context_dir.mkdir(parents=True, exist_ok=True)
+
     ignore_path = context_dir / "ignore"
     should_write = False
     if not ignore_path.is_file():
@@ -153,16 +200,10 @@ def ensure_context_dir(root: Path) -> Path:
             pass
 
     if should_write:
-        _ = ignore_path.write_text(
-            _DEFAULT_IGNORE_TEMPLATE, encoding="utf-8"
-        )
+        _ = ignore_path.write_text(_DEFAULT_IGNORE_TEMPLATE, encoding="utf-8")
         print(f"Created/Updated {ignore_path} with default ignore patterns.")
-
-    # Auto-create inputs directory if missing
-    inputs_dir = context_dir / "inputs"
-    inputs_dir.mkdir(parents=True, exist_ok=True)
-
-    return context_dir
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -174,12 +215,15 @@ def load_settings(root: Path) -> dict[str, object]:
     """Load settings from ``.context/settings.json``, falling back to defaults.
 
     Resolution strategy (Req 4 precedence — settings layer):
-    * If the file is missing → auto-create with defaults and return them.
+    * If the file is missing → auto-create with defaults, then honour the
+      ``use_default_ignore`` toggle when deciding whether to write
+      ``.context/ignore``.
     * If the file is empty → print a hint and return defaults (Edge case 2).
     * If the file contains invalid JSON → print a warning every run and
       return defaults (Edge case 2).
     * Otherwise, merge user values on top of ``DEFAULT_SETTINGS`` so that
-      new keys introduced in future versions are always present.
+      new keys introduced in future versions are always present, then run
+      migration to fill in any newly-added keys.
 
     Args:
         root: Project root directory containing ``.context/``.
@@ -188,9 +232,21 @@ def load_settings(root: Path) -> dict[str, object]:
         A settings dictionary guaranteed to contain every key from
         ``DEFAULT_SETTINGS``.
     """
-    # Ensure the configuration directory and files exist (including .context/inputs)
+    # Ensure the configuration directory and inputs/ exist (ignore file is
+    # NOT auto-created here — see ``write_default_ignore_if_enabled``).
     _ = ensure_context_dir(root)
     settings_path = root / ".context" / "settings.json"
+
+    # First-run bootstrap: settings.json missing → create with defaults.
+    if not settings_path.is_file():
+        initial = dict(DEFAULT_SETTINGS)
+        save_settings(root, initial)
+        print(
+            f"Created {settings_path} — edit your preferences or delete to reset."
+        )
+        # Honour the toggle (True by default → write template).
+        _ = write_default_ignore_if_enabled(root, initial)
+        return initial
 
     try:
         content = settings_path.read_text(encoding="utf-8").strip()
@@ -414,6 +470,7 @@ def _migrate_settings_file(root: Path, merged: dict[str, object]) -> None:
         "respect_target_arena_directive",
         "target_arena_directive_prefix",
         "on_arena_number_conflict",
+        "use_default_ignore",
     }
     settings_path = root / ".context" / "settings.json"
     if not settings_path.is_file():

@@ -640,7 +640,7 @@ def main() -> None:
     if root is None:
         root = cwd
 
-    patterns = load_ignore_patterns(root)
+    patterns = load_ignore_patterns(root, settings)
 
     # --- Centralize structure.txt and Drift Detection --------------------
     # Build live directory tree representation

@@ -2,7 +2,6 @@
 
 This module owns:
 
-* the built-in default ignore set,
 * the user's ``.context/ignore``-driven pattern loader,
 * the input-file discovery routines (``discover_files_txt``,
   ``discover_files_txt_with_directives``),
@@ -23,84 +22,43 @@ from pathlib import Path
 from typing import cast
 
 from core.arena import ArenaDirective, _safe_read_directive
-from core.settings import ensure_context_dir
-
-# ---------------------------------------------------------------------------
-# Module-level constants
-# ---------------------------------------------------------------------------
-
-_DEFAULT_IGNORE: frozenset[str] = frozenset(
-    {
-        ".git",
-        "node_modules",
-        "dist",
-        "build",
-        ".windsurf",
-        ".agents",
-        ".speckit",
-        ".specify",
-        "venv",
-        ".vercel",
-        ".cursor",
-        ".vscode",
-        ".github",
-        "compare_4.txt",
-        "compare-template.bak",
-        "compare_of_compare.txt",
-        "scripts",
-        "migrations.old",
-        "__pycache__",
-        ".next",
-        ".venv",
-        ".index_ignore",
-        "*.pyc",
-        ".DS_Store",
-        "files.txt",
-        "arena.txt",
-        "arena.md",
-        "context.txt",
-        "context.md",
-        "structure.txt",
-        "llm.txt",
-        "compare.md",
-        "compare.txt",
-        "compare_*.md",
-        "compare_*.txt",
-        "context_*.txt",
-        "context_*.md",
-        "files_*.txt",
-        "arena_*.txt",
-        "arena_*.md",
-        "structure_*.txt",
-        "models",
-        ".pnpm-store",
-        "desktop.ini",
-        "models/old",
-        "get-shit-done",
-        "gifts",
-        "agents",
-        ".agent",
-        # Output and configuration directories (Req 1, Req 8)
-        "context_output",
-        ".context",
-    }
-)
+from core.settings import ensure_context_dir, write_default_ignore_if_enabled
 
 
 # ---------------------------------------------------------------------------
 # Ignore-pattern management (Req 8)
+#
+# The tool's ignore defaults live ONLY in ``.context/ignore`` on disk
+# (written from ``_DEFAULT_IGNORE_TEMPLATE`` in ``core.settings``). There
+# is no second hardcoded layer — the user can opt out of the defaults
+# entirely by setting ``use_default_ignore: false`` in
+# ``.context/settings.json``.
 # ---------------------------------------------------------------------------
 
 
-def load_ignore_patterns(root: Path | None) -> frozenset[str]:
+def load_ignore_patterns(
+    root: Path | None,
+    settings: dict[str, object] | None = None,
+) -> frozenset[str]:
     """Load exclusion patterns from the .context/ignore file.
 
-    If ``.context/ignore`` does not exist, it is auto-created with a
-    default template via :func:`ensure_context_dir`.
+    The behaviour depends on the user's ``use_default_ignore`` setting:
+
+    * ``True`` (default) — if ``.context/ignore`` is missing or carries
+      the legacy description, the default template is auto-written before
+      patterns are read.
+    * ``False`` — the file is left entirely under user control. If it
+      does not exist, an empty pattern set is returned (so the full
+      project tree, including ``.context/`` and ``context_output/``,
+      shows up in ``structure.txt``).
 
     Args:
         root: Project root to search for config files.
               Falls back to the current working directory when ``None``.
+        settings: Effective settings dict (must include
+                  ``use_default_ignore`` for the toggle to take effect;
+                  falls back to ``True`` when ``None`` for backwards
+                  compatibility with any legacy callers).
 
     Returns:
         Immutable set of glob patterns identifying paths to exclude.
@@ -108,10 +66,17 @@ def load_ignore_patterns(root: Path | None) -> frozenset[str]:
     patterns: set[str] = set()
     search_dir = root if root is not None else Path.cwd()
 
-    # Ensure .context/ignore exists
-    _ = ensure_context_dir(search_dir)
+    # Ensure the .context/ directory exists (and inputs/, but NOT ignore
+    # automatically — that decision belongs to write_default_ignore_if_enabled).
+    _ = ensure_context_dir(search_dir, settings)
 
-    # Read .context/ignore
+    # Conditionally write the default ignore file when the user has not
+    # opted out. When the toggle is False, the file is left untouched
+    # (missing or otherwise) and the user's explicit file content wins.
+    if settings is not None:
+        _ = write_default_ignore_if_enabled(search_dir, settings)
+
+    # Read .context/ignore — only if it exists.
     context_ignore = search_dir / ".context" / "ignore"
     if context_ignore.is_file():
         patterns.update(_read_pattern_file(context_ignore))

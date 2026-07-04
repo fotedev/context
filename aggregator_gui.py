@@ -887,7 +887,9 @@ class AggregatorGUI(tk.Tk):
         """Rebuild the file-system tree from the current project root."""
         self._tree.delete(*self._tree.get_children())
         root = self._project_root
-        patterns = load_ignore_patterns(root)
+        # Re-read settings so the `use_default_ignore` toggle is honored.
+        settings = load_settings(root)
+        patterns = load_ignore_patterns(root, settings)
         queued_resolved = {p.resolve() for p, _r, _i in self._current_queue_entries()}
         filter_text = self._search_var.get().strip().lower()
 
@@ -1176,7 +1178,7 @@ class AggregatorGUI(tk.Tk):
                     for p, name in discovered
                 }
 
-            patterns = load_ignore_patterns(root)
+            patterns = load_ignore_patterns(root, settings)
             processed_count = 0
             total_tokens = 0
 
