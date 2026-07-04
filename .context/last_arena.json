@@ -1,11 +1,11 @@
 {
   "last_arena": "009-test_clean",
   "next_number": 10,
-  "total_arenas": 18,
-  "latest_activity_arena": "009-test_clean",
-  "latest_activity_time": "2026-07-02 19:16",
-  "total_inputs": 9,
-  "latest_input": "plan-and-helpers.txt",
-  "latest_input_time": "2026-07-02 13:45",
-  "updated_at": "2026-07-02 19:16"
+  "total_arenas": 21,
+  "latest_activity_arena": "003-files",
+  "latest_activity_time": "2026-07-04 13:58",
+  "total_inputs": 1,
+  "latest_input": "test_clean.txt",
+  "latest_input_time": "2026-06-23 15:42",
+  "updated_at": "2026-07-04 13:58"
 }
