@@ -13,5 +13,6 @@
   "paste_attachments_copy_mode": "copy",
   "paste_attachments_date_format": "%Y-%m-%d",
   "target_arena_directive_prefix": "# Target Arena:",
-  "on_arena_number_conflict": "warn_and_shift"
+  "on_arena_number_conflict": "warn_and_shift",
+  "use_default_ignore": true
 }

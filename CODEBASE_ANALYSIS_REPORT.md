@@ -1,9 +1,9 @@
 # Codebase Analysis Report — Context Tool (arena-context)
 
-**Date:** 2026-06-24  
-**Version:** 2.3.0  
+**Date:** 2026-07-04  
+**Version:** 2.5.0  
 **Scope:** Full code analysis, prompt requirements verification, skills audit, mini-skills review, security, testing, and performance assessment.  
-**Report Grade:** A (per cross-model peer review)
+**Report Grade:** A- (per cross-model peer review)
 
 ---
 
@@ -14,12 +14,12 @@
 | Prompt Compliance | 96% | All 11 requirements implemented; minor enhancements in Req 4 & 10 |
 | Edge Case Coverage | 100% | 12/12 edge cases fully handled (including nested subdirectory discovery) |
 | Skills Quality | 92/100 | Well-structured; minor doc alignment gaps |
-| Code Quality | 88/100 | Clean core architecture; TUI coupling and file size concerns |
-| Feature Completeness | 95/100 | Full parity across CLI/TUI/GUI for core features |
+| Code Quality | 90/100 | Clean modular architecture; GUI size concern remains |
+| Feature Completeness | 97/100 | Full parity across CLI/TUI/GUI; new migration & directive features |
 | Test Coverage | 0% | **No automated tests exist** — highest priority gap |
 | Security | Adequate | API key handling is safe; no path traversal exploits |
 
-**Bottom line:** The codebase is well-architected with a clean core engine, consistent error handling, and full prompt compliance. The critical gap is the complete absence of automated tests. Security posture is acceptable for a local CLI tool. The GUI file (`aggregator_gui.py`, 1,428 lines) is approaching "God Object" territory and should be considered for splitting in future versions.
+**Bottom line:** The codebase is well-architected with a clean modular core engine (6 core modules), consistent error handling, and full prompt compliance. The critical gap is the complete absence of automated tests. Security posture is acceptable for a local CLI tool. The GUI file (`aggregator_gui.py`, 1,260 lines) has been reduced from 1,428 lines but remains a maintainability concern.
 
 ---
 
@@ -27,13 +27,13 @@
 
 | Metric | Value |
 |--------|-------|
-| Total Python Lines | ~4,619 |
-| Core Modules | 3 (parser.py, judge.py, counter.py) |
+| Total Python Lines | ~6,397 |
+| Core Modules | 6 (parser.py, judge.py, counter.py, settings.py, discovery.py, arena.py) |
 | Entry Points | 3 (CLI, TUI, GUI) |
-| External Dependencies | 0 required, 2 optional (tiktoken, textual) |
-| Skills | 1 (arena-context) — a structured agent prompt that curates project context for LMArena blind pairwise comparisons |
+| External Dependencies | 0 required, 2 optional (tiktoken, textual) — now version-pinned |
+| Skills | 2 (arena-context, migrate-to-flat-layout) |
 | Mini-Skills | 1 (organize-root) — a single-purpose agent utility prompt for migrating legacy files to the canonical layout |
-| Settings Schema Keys | 8 |
+| Settings Schema Keys | 18 |
 | Test Files | 0 |
 | Type Hinting | Partial (function signatures, no strict MyPy enforcement) |
 | Linting | None configured (no ruff/flake8/mypy in repo) |
@@ -42,16 +42,25 @@
 
 | File | Lines | Size | Purpose |
 |------|-------|------|---------|
-| core/parser.py | 1,146 | ~48KB | Foundation: file I/O, paths, settings, tree, migration, recursive discovery |
-| core/judge.py | 693 | ~30KB | Gemini API, compare generation, archiving |
-| core/counter.py | 37 | ~1KB | Token counting (tiktoken + fallback) |
-| aggregator.py | 558 | ~23KB | CLI entry point, argparse, orchestration |
-| aggregator_gui.py | 1,428 | ~62KB | Tkinter desktop GUI |
-| aggregator_tui.py | 717 | ~28KB | Textual terminal UI |
-| install.py | 21 | ~1KB | Optional dependency installer (tiktoken, textual) |
-| **TOTAL** | **~4,540** | **~190KB** | |
+| core/parser.py | 955 | ~40KB | Foundation: file I/O, paths, tree, migration, recursive discovery |
+| core/judge.py | 615 | ~26KB | Gemini API, compare generation, archiving |
+| core/settings.py | 512 | ~21KB | Settings schema, .context/ management, paste-attachments archival |
+| core/discovery.py | 312 | ~13KB | File discovery, ignore-pattern matching, arena-state snapshotting |
+| core/arena.py | 272 | ~11KB | Arena directive parsing, conflict-resolved arena planning |
+| core/counter.py | 52 | ~2KB | Token counting (tiktoken + fallback) |
+| core/__init__.py | 7 | <1KB | Core module initialization |
+| aggregator.py | 706 | ~29KB | CLI entry point, argparse, orchestration |
+| aggregator_gui.py | 1,260 | ~53KB | Tkinter desktop GUI |
+| aggregator_tui.py | 607 | ~25KB | Textual terminal UI |
+| install.py | 15 | <1KB | Optional dependency installer (tiktoken, textual) |
+| renumber_arenas.py | 257 | ~11KB | One-time migration: rename arena dirs to match directives |
+| cleanup_first_heart.py | 609 | ~25KB | v3 flat layout migration for first_heart project |
+| skills/migrate-to-flat-layout/migrate_inputs.py | 218 | ~9KB | Legacy .context/inputs/ migration to flat arena dirs |
+| **TOTAL** | **~6,397** | **~266KB** | |
 
 **Note on `install.py`:** This script installs the two *optional* dependencies (`tiktoken` and `textual`). The core CLI requires zero third-party packages — all standard library.
+
+**Note on core module decomposition:** The original `parser.py` (1,146 lines) has been decomposed into four focused modules: `parser.py` (955 lines), `settings.py` (512 lines), `discovery.py` (312 lines), and `arena.py` (272 lines). This improves maintainability and testability.
 
 ---
 
@@ -177,10 +186,10 @@
 | Attribute | Value |
 |-----------|-------|
 | Name | arena-context |
-| Version | 2.3.0 |
+| Version | 2.5.0 |
 | License | MIT |
 | Location | `arena-context/SKILL.md` |
-| Lines | 187 |
+| Lines | 214 |
 
 **Quality Assessment:**
 - ✅ Clear trigger description ("bug reports, runtime/build errors, feature requests")
@@ -200,6 +209,27 @@
 
 **Issues Found:**
 - ⚠️ **Documentation Gap:** The report format at line 89-98 states `.context/inputs/<name>.txt updated` but does not explicitly clarify that the corresponding arena output (where `arena.txt` lives) is at `context_output/arenas/NNN-<name>/`. An agent reading only the report format might not know where to find the aggregated output.
+
+### Skill: `migrate-to-flat-layout` (SKILL.md)
+
+| Attribute | Value |
+|-----------|-------|
+| Name | migrate-to-flat-layout |
+| Version | 1.0 |
+| License | MIT |
+| Location | `skills/migrate-to-flat-layout/SKILL.md` |
+| Lines | 80 |
+
+**Quality Assessment:**
+- ✅ Clear trigger description ("updating an old project to the new File Aggregator flat layout")
+- ✅ Well-defined scope (one-shot cleanup of legacy projects)
+- ✅ Step-by-step procedure with dry-run support
+- ✅ Safety notes (idempotent, destructive operations clearly marked)
+- ✅ Verification steps
+- ✅ Companion script: `migrate_inputs.py` (218 lines)
+
+**Issues Found:**
+- ✅ No significant issues — clean and actionable.
 
 ### Mini-Skill: `organize-root.md`
 
@@ -229,14 +259,17 @@ A mini-skill is a single-purpose, self-contained agent instruction set used as a
 
 | Module | Imports From | Clean? | Impact |
 |--------|-------------|--------|--------|
-| aggregator.py | core.parser, core.counter, core.judge | ✅ | — |
-| aggregator_tui.py | core.parser, core.counter, core.judge | ✅ (fixed) | Was tight coupling to aggregator.py; now imports directly from core |
-| aggregator_gui.py | core.parser, core.counter, core.judge | ✅ | — |
+| aggregator.py | core (via __init__) | ✅ | — |
+| aggregator_tui.py | core (via __init__) | ✅ | Clean imports from core package |
+| aggregator_gui.py | core (via __init__) | ✅ | — |
 | core/parser.py | (stdlib only) | ✅ | — |
 | core/judge.py | (stdlib only) | ✅ | — |
+| core/settings.py | (stdlib only) | ✅ | — |
+| core/discovery.py | core.arena, core.settings | ✅ | Only cross-core imports allowed |
+| core/arena.py | (stdlib only) | ✅ | — |
 | core/counter.py | (stdlib + optional tiktoken) | ✅ | — |
 
-**Zero cross-imports between core modules** — clean separation maintained.
+**Clean dependency hierarchy:** `discovery.py` is the only module allowed to import across both `settings` and `arena`. All other core modules are independent.
 
 ### 4.2 Error Handling Pattern
 
@@ -264,16 +297,14 @@ UTF-8 encoding is consistently applied across all file I/O operations. Windows t
 
 ### 4.6 Dependency Version Pinning
 
-`requirements.txt` lists both optional dependencies (`tiktoken`, `textual`) **without version pins**:
+`requirements.txt` now pins both optional dependencies to known-good version ranges:
 
 ```
-tiktoken
-textual
+tiktoken>=0.7.0,<1.0
+textual>=0.40.0,<1.0
 ```
 
-**Risk:** Unpinned dependencies can cause silent build breaks when upstream APIs change. A future `pip install` could pull a breaking major version.
-
-**Recommendation:** Pin to known-good versions (e.g., `tiktoken>=0.7.0,<1.0` and `textual>=0.40.0,<1.0`) or adopt a lockfile (`pip-compile`, `poetry.lock`, or `uv.lock`).
+**Status:** ✅ Resolved — dependencies are now version-pinned, preventing silent build breaks from upstream API changes.
 
 ### 4.6 Test Coverage
 
@@ -299,20 +330,34 @@ textual
 ### 5.1 Dependency Flow
 
 ```
-aggregator.py ──→ core/parser.py
-                ──→ core/judge.py
-                ──→ core/counter.py
+aggregator.py ──→ core/ (via __init__.py)
+                ├─→ core/parser.py
+                ├─→ core/judge.py
+                ├─→ core/counter.py
+                ├─→ core/settings.py
+                ├─→ core/discovery.py
+                └─→ core/arena.py
 
-aggregator_tui.py ──→ core/parser.py
-                    ──→ core/judge.py
-                    ──→ core/counter.py
+aggregator_tui.py ──→ core/ (via __init__.py)
+                    ├─→ core/parser.py
+                    ├─→ core/judge.py
+                    ├─→ core/counter.py
+                    ├─→ core/settings.py
+                    ├─→ core/discovery.py
+                    └─→ core/arena.py
 
-aggregator_gui.py ──→ core/parser.py
-                   ──→ core/judge.py
-                   ──→ core/counter.py
+aggregator_gui.py ──→ core/ (via __init__.py)
+                   ├─→ core/parser.py
+                   ├─→ core/judge.py
+                   ├─→ core/counter.py
+                   ├─→ core/settings.py
+                   ├─→ core/discovery.py
+                   └─→ core/arena.py
+
+core/discovery.py ──→ core/arena.py, core/settings.py (sole cross-core importer)
 ```
 
-**Zero cross-imports between core modules** — clean separation. All three frontends depend on core/ but core/ never depends on any frontend.
+**Clean dependency hierarchy:** `discovery.py` is the only module allowed to import across both `settings` and `arena`. All three frontends depend on `core/` but `core/` never depends on any frontend.
 
 ### 5.2 Configuration Precedence Chain
 
@@ -323,29 +368,32 @@ Interactive Prompts (if --interactive)
   ↓ overrides
 .context/settings.json
   ↓ overrides
-DEFAULT_SETTINGS (hardcoded)
+DEFAULT_SETTINGS (hardcoded in core/settings.py)
 ```
 
-### 5.3 Output Structure
+### 5.3 Output Structure (v3 Flat Layout)
 
 ```
 context_output/
 ├── arenas/
-│   ├── 001-test-run/
+│   ├── 001-fix-navbar/
 │   │   ├── arena.txt
 │   │   ├── structure.txt
 │   │   ├── compare.md
-│   │   └── answers/
-│   │       ├── prompt.txt
-│   │       ├── A.txt
-│   │       └── B.txt
-│   └── 002-fix-navbar/
+│   │   ├── fix-navbar.txt        ← input file (flat, in arena dir)
+│   │   ├── A.txt
+│   │   ├── B.txt
+│   │   └── prompt.txt
+│   └── 002-add-auth/
 │       └── ...
 ├── models/
 │   ├── A.txt
 │   ├── B.txt
-│   ├── prompt.txt
-│   └── ARCHIVE/
+│   └── prompt.txt
+├── structure/
+│   └── structure.txt
+└── tmp/
+    └── paste-attachments/
 ```
 
 ---
@@ -359,20 +407,25 @@ context_output/
 | Token counting | ✅ | ✅ | ✅ | tiktoken + fallback |
 | Gemini AI Judge | ✅ | ✅ | ✅ | |
 | Compact mode | ✅ | ✅ | ✅ | |
-| Multi-file discovery | ✅ | ✅ | ✅ | .context/inputs/ + CWD fallback |
-| Arena subfolder output | ✅ | ✅ | ✅ | NNN-<name>/ format |
+| Multi-file discovery | ✅ | ✅ | ✅ | Flat arena dirs + CWD fallback |
+| Arena subfolder output | ✅ | ✅ | ✅ | NNN-<name>/ format (flat layout) |
 | Settings management | ✅ | ✅ | ✅ | .context/settings.json |
 | --settings flag | ✅ | ✅ | ✅ | |
 | --interactive flag | ✅ | N/A | N/A | GUI is always interactive by nature |
 | --output flag | ✅ | ✅ | ✅ | |
+| --status flag | ✅ | N/A | N/A | Shows latest arena state |
 | Archive workflow | ✅ | ✅ | ✅ | Timestamped archive |
 | Notes auto-merge | ✅ | ✅ | ✅ | Per-model notes files |
 | Model count templates | ✅ | ✅ | ✅ | Auto-create C.txt, D.txt |
-| Legacy migration | ✅ | ✅ | ✅ | CWD → context_output/ |
-| API key dialog | Env/`.env` | ✅ Modal | ✅ Modal | CLI reads from env/\.env files, no dialog |
+| Legacy migration | ✅ | ✅ | ✅ | CWD → context_output/ + flat layout |
+| API key dialog | Env/`.env` | ✅ Modal | ✅ Modal | CLI reads from env/.env files |
 | Settings auto-save | N/A | N/A | ✅ | GUI saves on checkbox/field change |
 | Cancel operation | N/A | N/A | ✅ | GUI cancel button with thread flag |
 | File search/filter | N/A | N/A | ✅ | GUI tree search bar |
+| Target Arena directive | ✅ | ✅ | ✅ | First-line `# Target Arena: NNN-<name>` |
+| Arena renumbering | ✅ | N/A | N/A | `renumber_arenas.py` utility |
+| Paste attachments | ✅ | N/A | N/A | Auto-archival from tmp/ |
+| use_default_ignore | ✅ | ✅ | ✅ | Toggle default ignore patterns |
 
 ---
 
@@ -418,6 +471,7 @@ context_output/
 | `aggregate_files()` | Streams file content via `stream_file_content()` | Low — does not load entire files into memory |
 | `read_file_entries()` | Reads all lines into memory | Low — `files.txt` is typically small |
 | Token counting | Loads entire arena.txt into memory for tiktoken | Medium — large aggregations (100K+ lines) could use significant RAM |
+| `discover_files_txt()` | Scans arena dirs for input files | Low — bounded by number of arenas |
 
 ### 8.2 Scalability Concerns
 
@@ -427,8 +481,11 @@ context_output/
 | Single 10MB+ file | `stream_file_content()` handles line ranges efficiently | Low — only requested lines are read |
 | 50+ arena folders | `resolve_arena_dir()` scans all existing arenas to find next number | Medium — O(N) scan on every run, but N is typically small |
 | No input files found | Graceful exit with message | None |
+| Arena directive conflicts | `build_arena_plan()` resolves conflicts with warn_and_shift | Low — one-time resolution per run |
 
 **Line Budget Protection:** The SKILL.md enforces a ≤5000 line budget per arena, which prevents token overflow scenarios. The tool itself does not enforce this budget — it relies on the agent (via the skill) to stay within limits.
+
+**Flat Layout Benefit:** The v3 flat layout eliminates the `answers/` subdirectory overhead, reducing I/O operations when reading arena contents.
 
 ---
 
@@ -438,23 +495,24 @@ context_output/
 
 | # | Severity | File | Issue | Impact |
 |---|----------|------|-------|--------|
-| 1 | Medium | `aggregator_gui.py` | **God Object:** 1,428 lines in a single class (`AggregatorGUI`). Handles UI, business logic, threading, and API calls. | Future maintainability; splitting into UI + controller would improve testability. |
-| 2 | Low | `judge.py:595` | Redundant `import re` inside `archive_model_responses()` — already imported at module level (line 10). | Code clarity only; no runtime impact. |
+| 1 | Medium | `aggregator_gui.py` | **God Object:** 1,260 lines in a single class (`AggregatorGUI`). Handles UI, business logic, threading, and API calls. | Future maintainability; splitting into UI + controller would improve testability. |
+| 2 | Low | `cleanup_first_heart.py` | 609-line migration script — one-time use, but large for a utility. | No runtime impact; consider archiving after use. |
 
 ### 9.2 Code Smells
 
 | # | File | Issue |
 |---|------|-------|
-| 1 | `parser.py:960-988` | `_LEGACY_OUTPUT_FILES` and `_LEGACY_OUTPUT_GLOBS` defined at module level but only used in `migrate_old_outputs()` — could be function-local. |
-| 2 | `aggregator_gui.py:68-69` | Module-level `_FILES_TXT` points to aggregator dir, but `AggregatorGUI.files_txt_path` property (line 302-304) points to `project_root / "files.txt"`. The module-level variable is vestigial from before the project-root refactor. |
+| 1 | `core/settings.py` | Settings schema has grown to 18 keys — consider grouping related settings (paste_attachments_*, target_arena_*) into nested objects. |
+| 2 | `aggregator_gui.py` | Module-level variables may be vestigial from pre-refactor era — verify all are still used. |
 
 ### 9.3 Documentation Gaps (Post-Fix Status)
 
 | # | File | Issue | Status |
 |---|------|-------|--------|
-| 1 | `README.md` | Referenced old CLI commands without .context/inputs/ workflow | ✅ Fixed in this session |
-| 2 | `features.md` | Referenced flat output structure instead of arena-based | ✅ Fixed in this session |
+| 1 | `README.md` | Referenced old CLI commands without .context/inputs/ workflow | ✅ Fixed |
+| 2 | `features.md` | Referenced flat output structure instead of arena-based | ✅ Fixed |
 | 3 | `features.md` | Missing `archive_dir` settings key documentation | ⚠️ Still missing |
+| 4 | `features.md` | Missing new settings keys (paste_attachments_*, target_arena_*, use_default_ignore) | ⚠️ Still missing |
 
 ### 9.4 Test Coverage Gap (Critical)
 
@@ -463,6 +521,8 @@ context_output/
 | **P0** | Create `tests/` directory with `pytest` configuration |
 | **P0** | Add unit tests for `core/parser.py` — path parsing, ignore patterns, settings load/save, entry validation |
 | **P0** | Add unit tests for `core/judge.py` — compare markdown generation, notes matching, template generation |
+| **P0** | Add unit tests for `core/arena.py` — directive parsing, conflict resolution |
+| **P0** | Add unit tests for `core/discovery.py` — file discovery, ignore patterns, arena state |
 | **P1** | Add integration test for CLI pipeline — end-to-end files.txt → arena.txt → compare.md |
 | **P1** | Add tests for edge cases EC1-EC11 as test scenarios |
 | **P2** | Add `mypy --strict` or `ruff check` to CI pipeline |
@@ -473,7 +533,7 @@ context_output/
 
 ### 10.1 arena-context SKILL.md
 
-**Current Version:** 2.3.0  
+**Current Version:** 2.5.0  
 **Recommended Updates:**
 
 1. **Clarify arena output path** — The report format should explicitly state that arena outputs live at `context_output/arenas/NNN-<name>/`, not just mention `.context/inputs/`
@@ -482,7 +542,15 @@ context_output/
 4. **Harmonize size budget** — Currently says "≤ 4000–5000 lines" but prompt.txt says "≤ 5000" — pick one value
 5. **Add troubleshooting section** — Common issues and fixes
 
-### 10.2 organize-root.md
+### 10.2 migrate-to-flat-layout SKILL.md
+
+**Current Version:** 1.0  
+**Recommended Updates:**
+
+1. **Add version history section** — Document initial release
+2. **Add troubleshooting section** — Common issues during migration
+
+### 10.3 organize-root.md
 
 **Recommended Updates:**
 
@@ -498,28 +566,33 @@ context_output/
 
 | Dimension | Score | Notes |
 |-----------|-------|-------|
-| Prompt Compliance | **96%** | All 11 requirements implemented; minor beneficial enhancements in Req 4 (extra archive prompt) and Req 10 (2 extra settings keys) |
-| Edge Case Coverage | **100%** | 11/11 edge cases fully handled |
+| Prompt Compliance | **96%** | All 11 requirements implemented; minor beneficial enhancements in Req 4 (extra archive prompt) and Req 10 (extra settings keys) |
+| Edge Case Coverage | **100%** | 12/12 edge cases fully handled |
 | Skills Quality | **92/100** | Well-structured; minor doc alignment gaps with arena-based output |
-| Code Quality | **88/100** | Clean core; GUI size concern and TUI coupling (now fixed) |
-| Feature Completeness | **95/100** | Full parity for core features; GUI has extras (cancel, auto-save, search) |
+| Code Quality | **90/100** | Clean modular core (6 modules); GUI size concern remains |
+| Feature Completeness | **97/100** | Full parity for core features; new directive, migration, and paste-attachment features |
 | Test Coverage | **0%** | **Critical gap** — no automated tests |
 | Security | **Adequate** | API key handling safe; no path traversal; HTTPS for API calls |
 
-### What Was Fixed in This Session
+### Key Changes Since v2.3.0
 
-1. `aggregator_tui.py` — Replaced tight coupling to `aggregator.py` with direct `core.parser` imports
-2. `aggregator_gui.py` — Moved `import re` to top of file with other stdlib imports
-3. `aggregator_gui.py` — Switched to `sys.stdout.reconfigure()` consistently (matching `aggregator.py`)
-4. `features.md` — Updated directory structure to show arena-based output and `.context/inputs/` workflow
-5. `README.md` — Updated architecture, outputs, ignore patterns, and added arena-based output feature
+1. **Core module decomposition** — `parser.py` split into `parser.py`, `settings.py`, `discovery.py`, `arena.py`
+2. **V3 flat layout** — Arena directories now contain input files directly (no `answers/` subfolder)
+3. **Target Arena directive** — First-line `# Target Arena: NNN-<name>` for explicit arena pinning
+4. **New skill: migrate-to-flat-layout** — One-shot migration from legacy layout
+5. **Paste attachments archival** — Auto-archival from `tmp/paste-attachments/`
+6. **use_default_ignore setting** — Toggle default ignore patterns
+7. **GUI reduced** — From 1,428 to 1,260 lines (12% reduction)
+8. **Dependencies version-pinned** — `tiktoken>=0.7.0,<1.0` and `textual>=0.40.0,<1.0`
+9. **Arena renumbering utility** — `renumber_arenas.py` for directive-based reordering
+10. **First_heart cleanup script** — `cleanup_first_heart.py` for v3 flat layout migration
 
 ### Final Verdict
 
 **Grade: A-**
 
-A well-architected, professionally structured codebase with clean separation of concerns, consistent error handling, and full prompt compliance. The absence of automated tests is the single most critical gap — addressing it would elevate this to production-grade quality. The GUI file size is a medium-term maintainability concern but does not affect current functionality.
+A well-architected, professionally structured codebase with clean modular separation of concerns, consistent error handling, and full prompt compliance. The v3 flat layout refactor improved maintainability by decomposing the monolithic parser into focused modules. The absence of automated tests remains the single most critical gap — addressing it would elevate this to production-grade quality. The GUI file size is a medium-term maintainability concern but does not affect current functionality.
 
 ---
 
-*Report generated by codebase analysis on 2026-06-24. Revised with cross-model peer review feedback.*
+*Report generated by codebase analysis on 2026-07-04. Updated from v2.3.0 to reflect v2.5.0 codebase state.*

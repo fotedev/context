@@ -35,9 +35,14 @@ the arena directory and moves the input files into their respective arena folder
        print('Nothing to flatten.')
    "
    ```
+   This runs both Phase 1 (v2→v3 flatten) and Phase 2 (v3→v3+ rename):
+   - Phase 1 moves files from subfolders (`arena/arena.txt`, `compare/compare.md`,
+     `answers/A.txt`) to the arena root.
+   - Phase 2 renames v3 files to v3+ names: `arena.txt` → `context.{ext}` (aggregate),
+     `compare.{ext}` → `arena.{ext}` (compare). The extension follows `output_format`.
 
 3. **Review Output**: Check the terminal output. It should list files moving
-   from subfolders to the arena root.
+   from subfolders to the arena root, plus any v3→v3+ renames.
 
 4. **Apply Internal Flatten**: Once approved, apply the migration:
    ```bash
@@ -49,6 +54,7 @@ the arena directory and moves the input files into their respective arena folder
    ```bash
    python skills/migrate-to-flat-layout/migrate_inputs.py --dry-run
    ```
+   Only `.txt` files in `.context/inputs/` are processed.
 
 6. **Apply Input Move**: Once approved, run without `--dry-run`:
    ```bash
@@ -62,6 +68,8 @@ the arena directory and moves the input files into their respective arena folder
    ```bash
    ls context_output/arenas/001-*/
    ```
+   Expected v3+ layout: `NNN-context.md` (aggregate), `NNN-arena.md` (compare),
+   `NNN-A.txt` (model answer), `NNN-B.txt`, etc. — all flat, no subfolders.
 
 8. **Final pass with the tool**: Run `python aggregator.py` once to apply any
    remaining auto-migration (e.g., for orphan inputs that need a new arena
@@ -76,5 +84,6 @@ the arena directory and moves the input files into their respective arena folder
   alone.
 - After migration, running `python aggregator.py` on this project will
   maintain the flat layout automatically.
-- `.context/inputs/` is added to `.gitignore` after the move, so the legacy
-  path does not get re-tracked.
+- `.context/inputs/` should be in `.gitignore` after the move, so the legacy
+  path does not get re-tracked. The `migrate_inputs.py` script adds this
+  entry automatically when the inputs directory is fully drained.

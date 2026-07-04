@@ -4,7 +4,7 @@ description: Curates and writes high-signal project context for LMArena. Trigger
 license: MIT
 metadata:
   author: fote
-  version: "2.5.0"
+  version: "2.5.1"
 
 ---
 # Arena Context
@@ -38,7 +38,6 @@ Prepares context for Blind Pairwise Comparisons and Arena Expert prompts on LMAr
 6. **WRITE** — **Mandatory target location:** Overwrite/create `.context/inputs/<descriptive-name>.txt` (where `<descriptive-name>` is derived from the user's prompt, e.g., `fix-navbar-bug.txt`).
    - *Directory Creation:* The agent MUST automatically create the `.context/inputs/` directory if it does not exist (using standard file writing tools which automatically handle parent folder creation).
    - *No Root Files:* Do NOT write to root `files.txt` and do NOT create prompt files (like `arena-prompt.md`) in the project root.
-   - *Prompt Placement:* If generating a prompt for LMArena models, write it directly to `.context/inputs/<descriptive-name>_prompt.txt` or `context_output/arenas/NNN-<descriptive-name>/answers/prompt.txt`.
 7. **REPORT** — Reply with the report format below.
 
 ### File Selection (expanding rings from the problem epicenter)
@@ -76,6 +75,8 @@ Each line is an absolute path formatted for the user's OS, one entry per line, n
 
 Line numbers are 1-indexed and inclusive. The `!` prefix marks structural highlights. Comment lines starting with `#` are ignored by the aggregator but provide context for anyone reading the input file.
 
+**Optional Directive:** You can add a `# Target Arena: NNN-<name>` directive on the first non-empty line to pin the arena number. If omitted, the tool auto-numbers arenas.
+
 ### Input File Structure
 Put comments from the user's prompt at the top of the input file as context:
 ```
@@ -110,9 +111,11 @@ After writing `.context/inputs/<descriptive-name>.txt`, always reply with:
 
 **Arena output:** `context_output/arenas/NNN-<descriptive-name>/` (where NNN is auto-incremented)
 - For files in subdirectories: `context_output/arenas/NNN-<category>-<name>/` (e.g., `001-UI-AdminPage/`)
-- `arena.txt` — aggregated source code
-- `structure.txt` — project tree
-- `compare.md` — model comparison template
+- `NNN-context.md` (or `.txt`) — aggregated source code
+- `NNN-arena.md` (or `.txt`) — model comparison template
+- `NNN-prompt.txt` — prompt sent to models (if generated)
+- `NNN-A.txt`, `NNN-B.txt` — model response files
+- `structure.txt` — project tree (located in `context_output/structure/structure.txt`)
 **Full files:**
 - `path/to/file.tsx` — reason
 **Code snippets:**
@@ -127,7 +130,7 @@ After writing `.context/inputs/<descriptive-name>.txt`, always reply with:
 ```
 <paste snippets or command outputs here>
 ```
-Copy this block alongside arena.txt (located in `context_output/arenas/NNN-<descriptive-name>/arena.txt`) into LMArena.
+Copy this block alongside `NNN-context.md` and `NNN-arena.md` (located in `context_output/arenas/NNN-<descriptive-name>/`) into LMArena.
 
 ## Examples
 ### ✅ UI/Layout bug — focused selection
@@ -203,7 +206,6 @@ Adding the entire 800-line `orders.ts` wastes budget on irrelevant code. Use lin
 
 ## Scope Boundaries
 - **Strict Target Directory Selection:** Always write input `.txt` files containing paths to `.context/inputs/<descriptive-name>.txt`. Never create files like `files.txt` or `arena-prompt.md` in the project root.
-- **Prompt Placement:** Always place generated prompts in `context_output/arenas/NNN-<descriptive-name>/answers/prompt.txt` or `.context/inputs/<descriptive-name>_prompt.txt` to keep the project root clean.
 - Write only to `.context/inputs/` — leave application code, configs, and dependencies untouched so the user's codebase remains stable.
 - Focus on selecting context rather than proposing fixes or implementing changes — LMArena's models handle the solution.
 - The user runs `aggregator.py` themselves; the skill's job ends after writing the input file and providing the report.

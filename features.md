@@ -2,43 +2,44 @@
 
 CLI tool that aggregates source files for LMArena blind pairwise comparisons.
 
-## Directory Structure (after first run)
-        
+## Directory Structure (v3+ Flat Layout)
+
 ```
 project/
 ├── .context/
 │   ├── settings.json          # persistent preferences
-│   ├── ignore                 # user-defined ignore patterns
-│   └── inputs/                # input manifests (primary discovery location)
-│       ├── UI/                # ← Category subdirectory (new feature)
-│       │   ├── AdminPage.txt  # ← Found as "UI-AdminPage"
-│       │   └── HomePage.txt   # ← Found as "UI-HomePage"
-│       ├── API/               # ← Another category subdirectory
-│       │   └── UserAuth.txt   # ← Found as "API-UserAuth"
-│       ├── Common/            # ← Common category
-│       │   └── Types.txt      # ← Found as "Common-Types"
-│       └── fix-navbar-bug.txt # Compatible flat structure
+│   ├── ignore                 # user-defined ignore patterns (NOT .contextignore)
+│   ├── inputs/                # input manifests (legacy v1 discovery tier)
+│   │   ├── UI/
+│   │   │   ├── AdminPage.txt  # found as "UI-AdminPage"
+│   │   │   └── HomePage.txt   # found as "UI-HomePage"
+│   │   ├── API/
+│   │   │   └── UserAuth.txt   # found as "API-UserAuth"
+│   │   ├── Common/
+│   │   │   └── Types.txt      # found as "Common-Types"
+│   │   └── fix-navbar-bug.txt # compatible flat structure
+│   └── last_arena.json        # state breadcrumb (auto-written each run)
 ├── context_output/            # all generated outputs
 │   ├── arenas/                # per-input arena folders (auto-numbered)
-│   │   ├── 001-UI-AdminPage/  # ← Arena with category name
-│   │   │   ├── arena.txt      # aggregated code
-│   │   │   ├── structure.txt  # project tree
-│   │   │   ├── compare.md     # model comparison (or .txt)
-│   │   │   └── answers/       # model responses + prompt
-│   │   │       ├── prompt.txt
-│   │   │       ├── A.txt
-│   │   │       └── B.txt
-│   │   │       └── ARCHIVE/   # archived responses
+│   │   ├── 001-UI-AdminPage/  # v3+ flat: every file carries the NNN- prefix
+│   │   │   ├── 001-UI-AdminPage.txt  # input (self-contained copy)
+│   │   │   ├── 001-context.md        # aggregated source code
+│   │   │   ├── 001-arena.md          # model comparison
+│   │   │   ├── 001-prompt.txt        # prompt sent to models
+│   │   │   ├── 001-A.txt             # Model A response
+│   │   │   ├── 001-B.txt             # Model B response
+│   │   │   ├── 001-A_NOTES.md        # optional notes for Model A
+│   │   │   └── ARCHIVE/              # archived responses
 │   │   ├── 002-UI-HomePage/
 │   │   ├── 003-API-UserAuth/
 │   │   └── 004-Common-Types/
-│   └── models/                # legacy models directory (migrated from root)
-│       ├── A.txt
-│       ├── B.txt
-│       └── prompt.txt
-├── files.txt                  # fallback input (CWD, for quick one-off runs)
-├── .env                       # GEMINI_API_KEY (tool root, not project)
-└── aggregator.py              # main script
+│   ├── structure/
+│   │   └── structure.txt       # project tree (centralized)
+│   └── tmp/
+│       └── paste-attachments/  # paste-attachments archival output
+├── files.txt                   # fallback input (CWD, for quick one-off runs)
+├── .env                        # GEMINI_API_KEY (tool root, not project)
+└── aggregator.py               # main script
 ```
 
 ---
@@ -52,31 +53,11 @@ $ python aggregator.py
 
 → Creates .context/settings.json with defaults
   "Created .context/settings.json — edit your preferences or delete to reset."
-→ Creates .contextignore with default template
+→ Creates .context/ignore with default template (when use_default_ignore=true)
 → Creates files.txt if missing
 → Reads settings.json → uses defaults
 → Processes files.txt
 → Outputs to context_output/
-```
-
-### Scenario 1b: Recursive Input Discovery (NEW)
-
-```
-.context/inputs/
-├── UI/
-│   ├── AdminPage.txt        # ← Found as "UI-AdminPage"
-│   └── HomePage.txt         # ← Found as "UI-HomePage"
-├── API/
-│   └── UserAuth.txt         # ← Found as "API-UserAuth"
-└── Common/
-    └── Types.txt            # ← Found as "Common-Types"
-
-→ Automatically discovers all .txt files in subdirectories
-→ Each file generates a unique Arena with category prefix:
-  001-UI-AdminPage/
-  002-UI-HomePage/
-  003-API-UserAuth/
-  004-Common-Types/
 ```
 
 ### Scenario 2: Normal Run (settings exist)
@@ -86,16 +67,33 @@ $ python aggregator.py
 
 → Reads .context/settings.json
 → Skips all prompts (gemini_judge=false, compact_mode=false, etc.)
-→ Discovers files*.txt (files.txt, files_1.txt, files_2.txt)
+→ Three-tier input discovery (see below)
 → For each input file:
-   - Generates arena_XXX.txt
-   - Generates structure_XXX.txt
-→ Generates compare.md (or .txt per settings)
-→ Merges A_NOTES.txt, B_NOTES.txt if they exist
+   - Generates NNN-context.{md,txt} (aggregated source code)
+   - Generates NNN-arena.{md,txt} (model comparison)
+→ Generates structure.txt
+→ Merges A_NOTES.md, B_NOTES.md if they exist
+→ Writes .context/last_arena.json state breadcrumb
 → Done. No prompts.
 ```
 
-### Scenario 2b: Flexible files.txt Format
+### Scenario 2b: Three-Tier Input Discovery
+
+```
+Tier 1 (Primary): v3 arena-dir scan
+  → Scans <output_dir>/arenas/ for NNN-<name>/ directories
+  → Matches input file exactly as NNN-<name>.txt
+  → Deduplicates by resolved path
+
+Tier 2 (Legacy v1): .context/inputs/*.txt (recursive)
+  → Each file generates one arena
+  → Arena name from relative path: UI/AdminPage.txt → UI-AdminPage
+
+Tier 3 (Oldest): CWD files.txt / files_*.txt
+  → Skipped when missing or empty (prevents blocking Tier 1)
+```
+
+### Scenario 2c: Flexible files.txt Format
 
 ```
 files.txt contains:
@@ -125,13 +123,13 @@ C:/proj/src/layouts/MainLayout.tsx:45-80
 $ python aggregator.py --interactive
 
 → Reads settings.json as defaults
-→ Shows all prompts:
+→ Shows all prompts (Enter=skip, Space=enable):
    1. "Run Gemini auto-comparison? [Enter=skip, Space=run]: "
    2. "Reduce tokens? Compact mode [Enter=skip, Space=enable]: "
    3. "Archive model responses? [Enter=no, Space=archive]: "
    4. "How many models? [Enter=2, Space=4]: "
    5. "Output format? [Enter=.md, Space=.txt]: "
-→ User choices override settings.json (but don't save back)
+→ User choices are SAVED back to settings.json
 → Processes as normal
 ```
 
@@ -140,15 +138,16 @@ $ python aggregator.py --interactive
 ```
 $ python aggregator.py
 
-→ Discovers: files.txt, files_1.txt, files_2.txt
-→ For each:
-   files.txt    → context_output/arena.txt
-                  context_output/structure.txt
-   files_1.txt  → context_output/arena_1.txt
-                  context_output/structure_1.txt
-   files_2.txt  → context_output/arena_2.txt
-                  context_output/structure_2.txt
-→ Single compare.md for all (or per-file if preferred)
+→ Three-tier discovery finds:
+   Tier 1: <output_dir>/arenas/001-fix-navbar.txt, 002-fix-header.txt
+   Tier 2: .context/inputs/UI/AdminPage.txt → 003-UI-AdminPage
+   Tier 3: CWD files.txt, files_1.txt
+→ For each input:
+   001-fix-navbar/  → 001-context.md, 001-arena.md
+   002-fix-header/  → 002-context.md, 002-arena.md
+   003-UI-AdminPage/ → 003-context.md, 003-arena.md
+   files/           → files-context.md, files-arena.md
+   files_1/         → files_1-context.md, files_1-arena.md
 ```
 
 ### Scenario 5: Archive Flow
@@ -158,12 +157,13 @@ $ python aggregator.py --interactive
 
 → Prompt 3: "Archive model responses? [Space=archive]"
 → User presses Space
-→ Script saves:
-   models/ARCHIVE/A_20260622_143022.txt
-   models/ARCHIVE/B_20260622_143022.txt
+→ Script archives per-arena:
+   001-ARCHIVE/001-A_20260704_143022.txt
+   001-ARCHIVE/001-B_20260704_143022.txt
+→ Re-creates fresh templates: 001-A.txt, 001-B.txt
 → Re-asks: "How many models? [Enter=2, Space=4]"
 → User can now pick different subset from archive
-→ Generates compare.md from selected models
+→ Generates arena.md from selected models
 ```
 
 ### Scenario 6: Custom Output Directory
@@ -175,39 +175,17 @@ $ python aggregator.py --output my_folder
 → settings.json "output_dir" is overridden by flag
 ```
 
-### Scenario 6b: Web Server Interface
-
-```bash
-# Enhanced web interface with local server
-$ web-svr
-
-→ Launches a local web server on http://localhost:5000
-→ Opens in browser automatically
-→ Provides interactive folder selection for answer storage
-→ Features direct code pasting buttons and text areas
-→ Full tool control from browser interface
-→ Supports cross-platform development workflows
-```
-
-**Web Server Features:**
-- **Automatic .env setup**: Creates configuration with GEMINI_API_KEY
-- **Interactive folder selection**: Browse and select answer storage location
-- **Direct code pasting**: Multiple input methods (clipboard, drag-drop, text areas)
-- **Real-time control**: Live tool execution and monitoring
-- **Cross-platform support**: Works on Windows, macOS, Linux, and cloud IDEs
-- **Responsive design**: Optimized for desktop and mobile browsers
-
 ### Scenario 7: Notes Auto-Merge
 
 ```
-models/A_NOTES.txt contains:
+001-A_NOTES.md contains:
 "Model A used a recursive approach which is cleaner."
 
-→ In compare.md, under Model A's response:
+→ In 001-arena.md, under Model A's response:
    ### Notes
    Model A used a recursive approach which is cleaner.
 
-→ If A_NOTES.txt doesn't exist → no Notes section for A
+→ If A_NOTES.md doesn't exist → no Notes section for A
 ```
 
 ### Scenario 8: Compact Mode
@@ -215,22 +193,76 @@ models/A_NOTES.txt contains:
 ```
 settings.json: "compact_mode": true
 
-→ compare.md generated with:
+→ arena.md generated with:
    - No "### Notes" sections
    - Collapsed blank lines
    - Trimmed whitespace
 → Token count reduced ~15-20%
 ```
 
-### Scenario 9: No Model Files Exist
+### Scenario 9: Arena Directives (Target Arena Pinning)
 
 ```
-$ python aggregator.py
+001-fix-navbar.txt first line:
+# Target Arena: 005-fix-navbar
 
-→ models/ is empty (no A.txt, B.txt)
-→ Auto-creates: A.txt, B.txt (empty)
-→ Prompts: "How many model files to create?"
-→ User enters 4 → creates A.txt, B.txt, C.txt, D.txt
+→ Arena is created as 005-fix-navbar/ (not auto-numbered)
+→ Filename remains source of truth for arena name
+→ Conflict resolution: warn_and_shift (default)
+   - If #005 is taken, shifts to next free number
+   - Prints warning on stderr
+```
+
+### Scenario 10: Paste-Attachments Archival
+
+```
+settings.json: "paste_attachments_enabled": true
+
+→ After processing, scans <root>/tmp/paste-attachments/<today>/*.txt
+→ Slugifies each file's first two sentences into a safe filename
+→ Copies (or moves) into <output_dir>/tmp/paste-attachments/<today>/
+→ Enables long-text pastes to be searchable in output directory
+```
+
+### Scenario 11: Status Snapshot for AI Agents
+
+```
+$ python aggregator.py --status
+
+→ Prints compact project-state snapshot:
+   last_arena   : 004-fix-header
+   next_number  : 005
+   total_arenas : 4
+   last_activity: 004-fix-header (2026-07-04 14:30)
+   total_inputs : 2
+   latest_input : AdminPage.txt (2026-07-04 12:00)
+
+$ python aggregator.py --status --json
+→ Same data as JSON to stdout
+
+$ python aggregator.py --status -q
+→ Prints only the next arena number (e.g. "005")
+```
+
+### Scenario 12: Settings Inspection
+
+```
+$ python aggregator.py --settings
+
+→ Prints active settings file path
+→ Prints current settings content
+→ Prints settings schema
+→ Exits without processing
+```
+
+### Scenario 13: --status State Breadcrumb
+
+```
+→ Every run writes .context/last_arena.json
+→ Contains: last_arena, next_number, total_arenas,
+   latest_activity_arena, latest_activity_time,
+   total_inputs, latest_input, latest_input_time
+→ Token-cheap cache for AI agents
 ```
 
 ---
@@ -239,9 +271,14 @@ $ python aggregator.py
 
 | Flag | Effect |
 |------|--------|
-| `--interactive` | Show all prompts, ignore settings.json preferences |
-| `--output DIR` | Custom output directory |
-| (no args) | Read settings.json, auto-discover files*.txt, run silently |
+| `--interactive` | Show all prompts, save choices back to settings.json |
+| `--output DIR` | Custom output directory (overrides settings) |
+| `--settings` | Print active settings file path, content, and schema; then exit |
+| `--status` | Print compact project-state snapshot for AI agents; then exit |
+| `--json` | With --status: emit JSON to stdout |
+| `-q` / `--quiet` | With --status: print only the next arena number |
+| `[root]` | Optional positional arg: project root directory (defaults to CWD/auto-detect) |
+| (no args) | Read settings.json, three-tier discovery, run silently |
 
 ## Settings.json Keys
 
@@ -253,46 +290,112 @@ $ python aggregator.py
 | `gemini_judge` | `false` | `true` / `false` |
 | `compact_mode` | `false` | `true` / `false` |
 | `archive` | `false` | `true` / `false` |
-| `archive_dir` | `"models/ARCHIVE"` | any folder name |
-| `inputs_dir` | `".context/inputs"` | any folder name |
+| `archive_dir` | `"ARCHIVE"` | any folder name |
+| `paste_attachments_enabled` | `false` | `true` / `false` |
+| `paste_attachments_source_dir` | `"tmp/paste-attachments"` | any folder name |
+| `paste_attachments_target_subdir` | `"tmp/paste-attachments"` | any folder name |
+| `paste_attachments_date_format` | `"%Y-%m-%d"` | any strftime format |
+| `paste_attachments_copy_mode` | `"copy"` | `"copy"` or `"move"` |
+| `respect_target_arena_directive` | `true` | `true` / `false` |
+| `target_arena_directive_prefix` | `"# Target Arena:"` | any prefix string |
+| `on_arena_number_conflict` | `"warn_and_shift"` | `"warn_and_shift"`, `"fail"`, `"silent"` |
+| `use_default_ignore` | `true` | `true` / `false` |
+
+**Deprecated keys** (auto-removed from legacy settings files):
+`inputs_dir`, `aggregate_filename`, `compare_filename`
 
 ## Ignore Patterns
 
 | File | Purpose |
 |------|---------|
-| `.contextignore` | User-defined ignore patterns (one per line, # comments) |
-| `_DEFAULT_IGNORE` | Built-in patterns in parser.py (merged with .contextignore) |
+| `.context/ignore` | User-defined ignore patterns (one per line, # comments) |
+| `_DEFAULT_IGNORE_TEMPLATE` | Built-in patterns in core/settings.py (written when `use_default_ignore=true`) |
+
+When `use_default_ignore=true` (default):
+- Auto-creates `.context/ignore` with the default template if missing
+- Rewrites if file still carries legacy description
+
+When `use_default_ignore=false`:
+- Never creates, writes, or overwrites `.context/ignore`
+- Full project tree (including `.context/` and `context_output/`) shows in `structure.txt`
 
 ## Output Formats
 
-| Format | Compare File | Notes Files | Use Case |
-|--------|-------------|-------------|----------|
-| `.md` (default) | `compare.md` | `A_NOTES.md` | Markdown with formatting |
-| `.txt` | `compare.txt` | `A_NOTES.txt` | Plain text, fewer tokens |
+| Format | Aggregate File | Compare File | Notes Files | Use Case |
+|--------|---------------|-------------|-------------|----------|
+| `.md` (default) | `NNN-context.md` | `NNN-arena.md` | `NNN-A_NOTES.md` | Markdown with formatting |
+| `.txt` | `NNN-context.txt` | `NNN-arena.txt` | `NNN-A_NOTES.txt` | Plain text, fewer tokens |
 
 ## Edge Cases
 
 | Case | Behavior |
 |------|----------|
-| Empty `files.txt` | Create empty templates (arena.txt, structure.txt, compare.md) in output folder |
+| Empty `files.txt` | Create empty templates (context.{ext}, arena.{ext}) in arena dir |
 | Invalid `settings.json` | Fall back to defaults, print warning every run |
 | Empty `settings.json` | Print: "Use context skill with AI model to set up preferences" |
 | Missing `settings.json` | Auto-create with defaults |
-| `model_count=4` but only 2 files | Auto-create empty C.txt, D.txt, prompt user to paste |
+| `model_count=4` but only 2 files | Auto-create empty C.txt, D.txt, print "Please paste their responses" |
 | Archive timestamp collision | Append `_1`, `_2`, etc. |
-| `context_output/` has old files | Warn: "Merge? [Enter=merge, Space=skip]" |
+| `context_output/` has old files | In interactive mode: prompt merge; non-interactive: default to overwriting |
 | Gemini API key not set | Warn and skip judge (don't error) |
 | Notes extension mismatch | Only match chosen output extension |
-| Old files in CWD | Warn: "Clean? [Enter=clean, Space=skip]" |
-| Nested subdirectories in inputs | Auto-discover recursively, flatten to category-name format |
+| Old files in CWD | Migrate to output_dir (v3+ flat layout) |
+| Nested subdirectories in inputs | Auto-discover recursively (Tier 2), flatten to category-name format |
+| v2 per-file folder layout | Auto-flatten to v3+ flat layout on every run (idempotent) |
+| `# Target Arena:` number conflict | Warn and shift to next free number (configurable) |
+| Cross-platform path resolution | Normalize Windows/POSIX separators, try suffix overlap with CWD |
+| BOM-encoded files | Handle UTF-8-BOM and UTF-16 input files |
 
 ## Project Root Detection
 
-The tool detects the project root using `find_project_root()` in parser.py:
+The tool detects the project root using `find_project_root()` in core/parser.py:
 - Starts from the first file path in files.txt
 - Searches parent directories for markers: `.git`, `package.json`, `pyproject.toml`, `requirements.txt`, `src`
 - Falls back to CWD if no markers found
 
 ## API Key Location
 
-The `.env` file with `GEMINI_API_KEY` lives in the **tool root directory** (where aggregator.py is), NOT in the user's project directory. This keeps the tool's config separate from the user's codebase.
+The `.env` file with `GEMINI_API_KEY` is searched in three locations (in order):
+1. The project root (root_dir)
+2. The current working directory
+3. The tool's own root directory (where aggregator.py lives)
+
+Non-interactive: returns `None` if key not found; caller skips judge.
+
+## Interfaces
+
+| Alias | Interface | Use Case |
+|-------|-----------|----------|
+| `agg` | CLI (Direct) | Run from files.txt with auto-detect project root |
+| `aggf` | CLI (Current) | Run with CWD as root |
+| `aggt` | TUI (Terminal UI) | Interactive file browsing in terminal (requires `textual`) |
+| `aggg` | GUI (Window) | Tkinter GUI with dark mode, no dependencies |
+
+## Auxiliary Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `install.py` | Install optional dependencies (tiktoken, textual) |
+| `renumber_arenas.py` | One-time migration: rename arena directories to match `# Target Arena:` directives |
+| `cleanup_first_heart.py` | Migrate legacy arena input files to v3 flat layout |
+
+## Code Snippets & Important Structures
+
+```
+# In files.txt or .context/inputs/*.txt:
+
+/path/to/file.py                    → full file (FILE header)
+/path/to/file.py:10-20              → snippet (SNIPPET header)
+/path/to/file.py:5-10,25-30         → multi-range snippet (..., separated)
+!/path/to/types.ts:1-5              → important structure (IMPORTANT STRUCTURE header)
+```
+
+- Full files: `# --- FILE: src/utils.py (150 lines) ---`
+- Snippets: `# --- SNIPPET: src/utils.py [10-20] (11 lines) ---`
+- Important: `# --- IMPORTANT STRUCTURE: src/types.ts [1-5] (5 lines) ---`
+
+## Token Counting
+
+- Uses `tiktoken` (cl100k_base) if installed
+- Fallback: `max(char_count / 4, word_count * 1.3)`
+- Displayed after each arena aggregation

@@ -1,5 +1,8 @@
 # Refactor `core/parser.py` + Add `--status` — Implementation Plan
 
+> **Status: ✅ COMPLETE** — All phases A–F implemented and verified.
+> Last verified: 2026-07-04.
+>
 > **Goal (الهدف):** Split the bloated `core/parser.py` (≈1673 lines, 3+ mixed
 > concerns) into focused modules **without breaking any existing import**, and
 > add an `agg --status` flag that gives AI agents a tiny, token-cheap snapshot
@@ -35,6 +38,9 @@ still works AND `python -m py_compile` passes on all five files.
 ---
 
 ## 1. Current state (as-is)
+
+> **Note:** This section describes the pre-refactor state. The refactor is now
+> complete — see §11 for the final checklist.
 
 `core/parser.py` mixes **6 concerns** in one 1673-line file:
 
@@ -98,6 +104,9 @@ Keeping it with settings avoids creating a tiny extra module.
 
 ## 3. Phase A — Create `core/settings.py`
 
+> **✅ Complete.** `core/settings.py` exists (616 lines), compiles, and exports
+> `DEFAULT_SETTINGS` correctly.
+
 Move these symbols **verbatim** (copy the code, do not rewrite logic) from
 `core/parser.py` into `core/settings.py`:
 
@@ -144,9 +153,14 @@ must print `context_output`. (It will also fail elsewhere because parser.py
 still references these names — that's fine, fixed in Phase D. Just confirm
 `settings.py` parses: `python -m py_compile core/settings.py`.)
 
+> **✅ Verified 2026-07-04:** Prints `context_output`. Compiles clean.
+
 ---
 
 ## 4. Phase B — Create `core/arena.py`
+
+> **✅ Complete.** `core/arena.py` exists (333 lines), compiles, and
+> `ArenaDirective(number=6, name='x')` produces the expected dataclass repr.
 
 Move these symbols **verbatim** from `core/parser.py` into `core/arena.py`:
 
@@ -191,9 +205,14 @@ another parser function, stop and re-check (there shouldn't be).
 
 ✅ **Checkpoint B:** `python -m py_compile core/arena.py` passes.
 
+> **✅ Verified 2026-07-04:** Compiles clean.
+
 ---
 
 ## 5. Phase C — Create `core/discovery.py` (incl. NEW `get_latest_state`)
+
+> **✅ Complete.** `core/discovery.py` exists (386 lines), compiles, and
+> `get_latest_state()` returns a valid state dict.
 
 Move these symbols **verbatim** from `core/parser.py` into `core/discovery.py`:
 
@@ -320,9 +339,14 @@ def get_latest_state(
 
 ✅ **Checkpoint C:** `python -m py_compile core/discovery.py` passes.
 
+> **✅ Verified 2026-07-04:** Compiles clean.
+
 ---
 
 ## 6. Phase D — Slim `core/parser.py` into a shim + re-exports
+
+> **✅ Complete.** `core/parser.py` slimmed to 1170 lines, re-exports all public
+> names, and the Checkpoint D import-all line prints `all imports OK`.
 
 After Phases A–C, `core/parser.py` should **delete** every symbol that was
 moved (settings, paste, discovery, ignore, arena). What **remains** in
@@ -400,9 +424,14 @@ python -m py_compile aggregator.py aggregator_gui.py aggregator_tui.py renumber_
 Both must succeed. If the first fails, a symbol is missing from the shim
 re-exports — add it.
 
+> **✅ Verified 2026-07-04:** Prints `all imports OK`. All 8 files compile clean.
+
 ---
 
 ## 7. Phase E — Add `--status` to `aggregator.py`
+
+> **✅ Complete.** `--status`, `--status -q`, and `--status --json` all work
+> correctly, printing state and exiting without side effects.
 
 This is the second prompt's feature. It must **print state and exit before any
 aggregation/migration** (token-cheap, side-effect-free).
@@ -502,9 +531,16 @@ latest_input : <newest>.txt (...)
 `python aggregator.py --status --json` all run and exit without doing any
 aggregation (no new files created in `context_output/`).
 
+> **✅ Verified 2026-07-04:** All three modes work. `--status` prints state block,
+> `-q` prints `010`, `--json` prints valid JSON. No side effects.
+
 ---
 
 ## 8. Phase F (optional but recommended) — breadcrumb cache
+
+> **✅ Complete.** `write_state_breadcrumb` exists in `core/discovery.py` and is
+> called at the end of `aggregator.py`'s `main()`. Re-exported from the parser
+> shim.
 
 To harden against git-checkout / folder-copy timestamp loss, write a tiny
 breadcrumb after a **successful** aggregation run and prefer it for the "when"
@@ -547,6 +583,9 @@ path is fully functional on its own.
 ---
 
 ## 9. Verification matrix (run ALL before declaring done)
+
+> **✅ All checks verified 2026-07-04.** Checkpoints A–F and all 12 matrix
+> items pass.
 
 | # | Command | Expected |
 |---|---|---|
@@ -595,14 +634,14 @@ path is fully functional on its own.
 
 ## 11. Definition of Done ✅
 
-- [ ] `core/settings.py`, `core/arena.py`, `core/discovery.py` exist and compile.
-- [ ] `core/parser.py` is slimmed and re-exports every name from §0's table.
-- [ ] `core/__init__.py` imports the new submodules.
-- [ ] `aggregator.py` supports `--status`, `--status -q`, `--status --json`.
-- [ ] All 12 checks in §9 pass.
-- [ ] No existing behavior changed: `aggregator.py` full run still produces the
+- [x] `core/settings.py`, `core/arena.py`, `core/discovery.py` exist and compile.
+- [x] `core/parser.py` is slimmed and re-exports every name from §0's table.
+- [x] `core/__init__.py` imports the new submodules.
+- [x] `aggregator.py` supports `--status`, `--status -q`, `--status --json`.
+- [x] All 12 checks in §9 pass.
+- [x] No existing behavior changed: `aggregator.py` full run still produces the
       same outputs in the same places.
-- [ ] (Optional) breadcrumb written after runs.
+- [x] (Optional) breadcrumb written after runs.
 
 ---
 
@@ -622,13 +661,15 @@ working state. (The `--status` feature is lost on rollback — it only touches
 
 ## 13. Execution order summary (do exactly this)
 
-1. **Phase A** → create `core/settings.py`, compile-check.
-2. **Phase B** → create `core/arena.py`, compile-check.
-3. **Phase C** → create `core/discovery.py` (+ `get_latest_state`), compile-check.
-4. **Phase D** → slim `core/parser.py`, add shim re-exports, update `__init__.py`, run Checkpoint D.
-5. **Phase E** → add `--status` to `aggregator.py`, run Checkpoints E.
-6. **Phase F** (optional) → breadcrumb.
-7. Run the **full §9 verification matrix**.
-8. Report which checkpoints passed/failed with the actual command output.
+> **✅ All steps completed.**
+
+1. **Phase A** → create `core/settings.py`, compile-check. ✅
+2. **Phase B** → create `core/arena.py`, compile-check. ✅
+3. **Phase C** → create `core/discovery.py` (+ `get_latest_state`), compile-check. ✅
+4. **Phase D** → slim `core/parser.py`, add shim re-exports, update `__init__.py`, run Checkpoint D. ✅
+5. **Phase E** → add `--status` to `aggregator.py`, run Checkpoints E. ✅
+6. **Phase F** (optional) → breadcrumb. ✅
+7. Run the **full §9 verification matrix**. ✅
+8. Report which checkpoints passed/failed with the actual command output. ✅
 
 Stop and ask before deviating from the module layout in §2.

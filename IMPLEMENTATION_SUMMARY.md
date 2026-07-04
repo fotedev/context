@@ -1,225 +1,298 @@
 # Implementation Summary
 
 ## Overview
-This document summarizes the implementation of enhanced VS Code extension and browser-based interface capabilities for the context tool, supporting automated workflow management with a local web server.
 
-## Changes Made
+This document summarizes the implementation of the context tool — a CLI tool that aggregates source files for LMArena blind pairwise comparisons. The tool supports automated workflow management with arena-based output organization, AI judge integration, and flexible input discovery.
 
-### 1. Updated Prompt and Documentation
+## Current Architecture
 
-#### prompt.txt
-- **Added gui/browser-extension/** - Complete browser extension for multi-platform tool control
-- **Added gui/vscode-extension/** - Legacy VS Code extension for backward compatibility
-- **Updated Req 8** - Comprehensive browser extension requirements with:
-  - Automatic .env file creation with GEMINI_API_KEY
-  - Server integration with real-time browser control
-  - Interactive folder selection interface
-  - Direct code pasting capabilities
-  - Cross-platform support (Chrome, Firefox, Safari)
-  - Web IDE integration (GitHub Codespaces, GitPod)
-- **Added Req 9** - Windows environment setup for local server integration
+### Core Module Structure
 
-#### README.md
-- **Updated architecture** - Added `gui/` directory with browser extension
-- **Added new interfaces**:
-  - `web-svr` - Local server with control interface (recommended)
-  - `web-ext` - Browser extension for desktop
-  - `web-vscode` - VS Code extension (legacy)
-- **Enhanced description** of LMArena judge mode capabilities
+The core logic lives in `core/` with focused modules:
 
-#### features.md
-- **Updated directory structure** - Added `web-server/` and `web-server/dist/` sections
-- **Maintained clarity** of existing functionality
+```
+core/
+├── __init__.py        # Package initialization, imports all submodules
+├── settings.py        # Settings management + paste-attachments archival
+├── discovery.py       # File discovery, ignore patterns, arena state snapshots
+├── arena.py           # Arena directive parsing, conflict resolution, directory resolution
+├── parser.py          # Path parsing, aggregation, tree generation, output migration (backward-compat shim)
+├── counter.py         # Token counting using tiktoken
+└── judge.py           # Gemini AI judge integration, model response collection
+```
 
-### 2. Core Infrastructure Updates
+**Dependency Direction (no cycles):**
+- `settings.py` ← no internal imports
+- `arena.py` ← no internal imports
+- `discovery.py` ← imports from `arena.py` and `settings.py`
+- `parser.py` ← imports from `settings.py`, `discovery.py`, `arena.py`, `counter.py`
 
-#### core/parser.py (Enhanced)
+### Entry Points
+
+| Command | File | Interface |
+|---------|------|-----------|
+| `agg` | `aggregator.py` | CLI (Direct) — reads from CWD, auto-detects project root |
+| `aggf` | `aggregator.py .` | CLI (Current Dir) — treats CWD as root |
+| `aggt` | `aggregator_tui.py` | TUI (Terminal UI) — interactive file browsing |
+| `aggg` | `aggregator_gui.py` | GUI (Tkinter Window) — dark mode support |
+
+---
+
+## Key Implementations
+
+### 1. Settings Management (`core/settings.py`)
+
+**Default Settings Schema:**
 ```python
-# Updated discover_files_txt() to support recursive arena naming
-for p in sorted(inputs_dir.rglob("*.txt")):
-    if p.is_file():
-        rel_path = p.relative_to(inputs_dir)
-        parts = list(rel_path.parent.parts) + [rel_path.stem]
-        parts = [part for part in parts if part and part != '.']
-        arena_name = "-".join(parts)
+DEFAULT_SETTINGS = {
+    "output_dir": "context_output",
+    "output_format": "md",           # "md" or "txt"
+    "model_count": 2,
+    "gemini_judge": False,
+    "compact_mode": False,
+    "archive": False,
+    "archive_dir": "ARCHIVE",
+    "paste_attachments_enabled": False,
+    "paste_attachments_source_dir": "tmp/paste-attachments",
+    "paste_attachments_target_subdir": "tmp/paste-attachments",
+    "paste_attachments_date_format": "%Y-%m-%d",
+    "paste_attachments_copy_mode": "copy",
+    "respect_target_arena_directive": True,
+    "target_arena_directive_prefix": "# Target Arena:",
+    "on_arena_number_conflict": "warn_and_shift",
+    "use_default_ignore": True,
+}
 ```
-
-**Changes:**
-- **Recursive discovery:** `rglob("*.txt")` instead of `glob("*.txt")`
-- **Smart arena naming:** Flattens directory structure (e.g., `UI/AdminPage.txt` → `UI-AdminPage`)
-- **Error handling:** `try/except` for path relative-to operations
-- **Backward compatibility:** Falls back to filename if path operations fail
-
-### 3. New Browser Extension Structure
-
-#### gui/browser-extension/
-```
-gui/browser-extension/
-├── manifest.json              # Extension configuration
-├── background.js              # Server management and API routing
-├── content.js                 # DOM interaction and tool control
-└── ui.html                    # Main user interface
-```
-
-**Key Features:**
-- **Automatic .env setup:** Creates configuration file with API keys
-- **Interactive folder selection:** Native OS file picker integration
-- **Direct code pasting:** Multiple input methods (clipboard, drag-drop, text areas)
-- **Real-time tool control:** Live control from browser interface
-- **Cross-platform support:** Works with modern browsers and cloud IDEs
-
-#### gui/vscode-extension/ (Legacy)
-```
-gui/vscode-extension/
-├── manifest.json              # VS Code extension configuration
-├── main.js                    # Extension activation and commands
-└── ... (other VS Code specific files)
-```
-
-**Purpose:**
-- Maintains compatibility for existing users
-- Provides familiar VS Code experience
-- Gradually migrate users to browser extension
-
-### 4. Server Integration (web-svr)
-
-**Command:** `web-svr` - Launches local server with web interface
 
 **Features:**
-- **Local web server:** Access tool from any browser locally
-- **Real-time control:** Interactive UI for tool management
-- **Automatic port detection:** Finds available server ports
-- **Responsive design:** Works on desktop and mobile
-- **API endpoints:** For programmatic tool interaction
+- Auto-creates `.context/settings.json` with defaults on first run
+- Merges user settings with defaults for forward compatibility
+- Migrates deprecated keys (`inputs_dir`, `aggregate_filename`, `compare_filename`)
+- `--settings` CLI flag displays current settings and schema
 
-### 5. Enhanced User Experience
+### 2. File Discovery (`core/discovery.py`)
 
-#### Before (CLI-only):
-```python
-# Limited to terminal usage
-python aggregator.py --interactive
+**Three-tier discovery (all merged, no short-circuit):**
+
+1. **Tier 1: v3 arena-dir scan (primary, prefix-aware)** — Scans `<root>/<output_dir>/arenas/` for `NNN-<name>/` directories. Input file matched exactly as `<prefix>-<arena_name>.txt`.
+
+2. **Tier 2: legacy `.context/inputs/*.txt` (v1 style, recursive)** — Each file becomes one arena. Arena name derived from relative path (e.g., `UI/AdminPage.txt` → `UI-AdminPage`).
+
+3. **Tier 3: legacy CWD `files.txt` / `files_*.txt` (oldest style)** — Skipped when file is missing or empty.
+
+**Ignore Pattern Management:**
+- Reads patterns from `.context/ignore`
+- `use_default_ignore` setting controls auto-creation of default patterns
+- Default patterns include: `.git`, `node_modules`, `venv`, `__pycache__`, `context_output`, `.context`, etc.
+- LRU-cached glob matching for performance
+
+### 3. Arena Directive Parsing (`core/arena.py`)
+
+**`# Target Arena:` directive:**
+- First non-empty line of input file can specify: `# Target Arena: 006-AdminDashboard`
+- Pins the arena number; filename remains source-of-truth for arena name
+- Case-insensitive prefix matching
+- Conflict resolution: `warn_and_shift` (default), `fail`, or `silent`
+
+**`build_arena_plan()` algorithm:**
+1. Split inputs into explicit (have directive) and implicit (no directive)
+2. Sort each group alphabetically by filename
+3. Assign explicit inputs their directive numbers (resolve conflicts)
+4. Assign implicit inputs smallest free numbers after highest explicit
+
+### 4. Arena-Based Output Organization
+
+**v3+ flat layout (current):**
+```
+context_output/
+├── arenas/
+│   ├── 001-fix-navbar-bug/
+│   │   ├── 001-fix-navbar-bug.txt    # input (prefixed)
+│   │   ├── 001-context.md            # aggregated code (prefixed)
+│   │   ├── 001-arena.md              # LMArena comparison (prefixed)
+│   │   ├── 001-prompt.txt            # prompt (prefixed)
+│   │   ├── 001-A.txt                 # model A response (prefixed)
+│   │   ├── 001-B.txt                 # model B response (prefixed)
+│   │   └── 001-A_NOTES.md            # model A notes (prefixed)
+│   └── 002-refactor-api/
+│       └── ...
+└── models/                            # legacy models directory (migrated from root)
 ```
 
-#### After (Multi-platform):
+**Prefixed filename helpers:**
+- `arena_filenames(arena_dir, output_format)` → dict with `input`, `context`, `arena`, `prompt`
+- `arena_model_filename(arena_dir, letter)` → `NNN-Letter.txt`
+
+### 5. Output Migration System
+
+**Legacy CWD migration (`migrate_old_outputs`):**
+- Moves legacy output files (`arena.txt`, `structure.txt`, `compare.md`) from CWD to `output_dir/`
+- Moves `root/models/` to `output_dir/models/`
+- Safety guard: skips if output dir already populated
+
+**Per-file folder migration (`migrate_to_per_file_folders`):**
+- Reorganizes flat outputs into v2 per-file folders (e.g., `arena/arena.txt`)
+- Idempotent: re-running on already-migrated tree is a no-op
+
+**Flat layout migration (`migrate_to_flat_layout`):**
+- Phase 1: v2 → v3 flat (flatten subfolders into arena root)
+- Phase 2: v3 → v3+ rename (`arena.txt` → `context.{ext}`, `compare.{ext}` → `arena.{ext}`)
+- Supports dry-run mode for preview
+
+### 6. Paste-Attachments Archival
+
+**Purpose:** Archive manually-pasted long text files into the output directory.
+
+**Workflow:**
+1. User pastes text into `tmp/paste-attachments/<date>/` folder
+2. Tool copies/moves files to `output_dir/<target>/<date>/` with slugified filenames
+3. Slug derived from first two sentences of content (casefolded, sanitized)
+
+**Configuration:**
+- `paste_attachments_enabled`: Master toggle
+- `paste_attachments_source_dir`: Where to find pastes (default: `tmp/paste-attachments`)
+- `paste_attachments_target_subdir`: Where to archive (default: `tmp/paste-attachments`)
+- `paste_attachments_copy_mode`: `"copy"` or `"move"`
+
+### 7. Gemini AI Judge Integration (`core/judge.py`)
+
+**Features:**
+- `.env` file loading with `GEMINI_API_KEY` detection
+- Model response collection from `models/` directory or arena-specific directories
+- Compact mode: removes `### Notes` sections, collapses blank lines, trims whitespace
+- Notes auto-merge: inserts `A_NOTES.md`/`A_NOTES.txt` content under model responses
+- Archive flow: saves timestamped copies before clearing for new round
+
+**Edge Cases:**
+- Missing API key: warns and skips judge (no crash)
+- Notes extension mismatch: only matches chosen output extension
+- Model count mismatch: auto-creates empty template files
+
+### 8. Path Parsing and Aggregation
+
+**Cross-platform path resolution:**
+- Handles Windows/Linux path differences
+- Suffix overlap detection for path mapping
+- Drive letter normalization
+
+**File entry parsing:**
+- Full files: `/path/to/file.py`
+- Line ranges: `/path/to/file.py:10-20`
+- Multi-range snippets: `/path/to/file.py:5-10,25-30`
+- Important structures: `!/path/to/types.ts:1-15`
+
+**Streaming aggregation:**
+- Memory-efficient streaming for large files
+- Sorted range processing for non-contiguous snippets
+- UTF-8/UTF-16/BOM encoding detection
+
+### 9. Directory Tree Generation
+
+**Features:**
+- Recursive traversal with max depth limit (20)
+- Symlink cycle prevention
+- Line count per file using `count_lines()`
+- Ignore pattern filtering
+
+### 10. State Snapshot for AI Agents (`--status`)
+
+**`get_latest_state()` returns:**
 ```python
-# CLI interface
-python aggregator.py --interactive
-
-# Web interface (recommended)
-web-svr
-
-# Browser extension interface
-web-ext
-
-# Legacy VS Code interface
-web-vscode
+{
+    "last_arena": "003-fix-navbar",
+    "next_number": 4,
+    "total_arenas": 3,
+    "latest_activity_arena": "002-refactor-api",
+    "latest_activity_time": "2026-07-04 10:30",
+    "total_inputs": 5,
+    "latest_input": "fix-navbar.txt",
+    "latest_input_time": "2026-07-04 09:15"
+}
 ```
 
-**New Capabilities:**
-1. **Automatic .env creation:** One-time setup with API key storage
-2. **Folder selection:** Browse for answer storage locations
-3. **Direct code pasting:** Multiple input methods
-4. **Real-time monitoring:** Live status and progress tracking
-5. **Cross-device sync:** Consistent experience across platforms
+**`write_state_breadcrumb()`:**
+- Persists JSON snapshot to `.context/last_arena.json`
+- Best-effort only, never raises
 
-### 6. Backward Compatibility
+---
+
+## Backward Compatibility
 
 **Existing users remain unaffected:**
 - All CLI commands unchanged (`agg`, `aggf`, `aggt`, `aggg`)
-- All existing files and workflows still work
-- Legacy VS Code extension maintained for gradual migration
-- All existing documentation updated for new options
+- `core/parser.py` re-exports all public names for import compatibility
+- Legacy `.contextignore` patterns still supported
+- CWD `files.txt` fallback still works
 
-### 7. New Usage Scenarios
+**Migration paths:**
+- `migrate_old_outputs()`: CWD outputs → `output_dir/`
+- `migrate_to_per_file_folders()`: flat → v2 per-file layout
+- `migrate_to_flat_layout()`: v2 → v3+ flat layout
 
-#### Scenario A: Quick One-off CLI Run
-```bash
-python aggregator.py
+---
+
+## Configuration Precedence
+
+```
+Command Line Flags > Interactive Prompts (--interactive) > Settings File (.context/settings.json) > Hardcoded Defaults
 ```
 
-#### Scenario B: Enhanced Browser Interface
-```bash
-# Set up server with web interface
-web-svr
-
-# Access via browser at http://localhost:5000
-# Features:
-# - Automatic .env creation
-# - Folder selection
-# - Direct code pasting
-# - Live tool control
-```
-
-#### Scenario C: Multi-user Cloud Environment
-```bash
-# In GitHub Codespaces or similar cloud environments
-web-svr
-
-# Access from any device with same network
-# Supports collaboration and shared workspaces
-```
-
-## Technical Implementation Notes
-
-### Server Architecture
-- **Node.js/React** stack for web interface
-- **WebSocket support** for real-time updates
-- **RESTful API** for programmatic access
-- **Secure communication** with local server
-
-### File Organization
-- **Automatic arena naming:** `UI-AdminPage` instead of `AdminPage`
-- **Recursive discovery:** Supports nested input file organization
-- **Error handling:** Robust fallback mechanisms
-
-### Performance Considerations
-- **Memory efficient:** Streaming for large file processing
-- **Caching:** Reduced API calls and file reads
-- **Lazy loading:** Only load necessary components
-
-## Migration Path
-
-### For Existing Users
-1. **No immediate action required:** Continue using existing CLI interfaces
-2. **Optional upgrade:** Try `web-svr` for enhanced experience
-3. **Gradual transition:** Adopt browser interface for new projects
-
-### For New Users
-1. **Start with CLI:** `python aggregator.py` for simplicity
-2. **Upgrade to web:** `web-svr` for enhanced features
-3. **Full adoption:** Browser extension for maximum portability
+---
 
 ## Testing and Validation
 
 **Verification checklist:**
-- [x] Browser extension installation and activation
-- [x] Server startup and shutdown
-- [x] Automatic .env file creation
-- [x] Folder selection functionality
-- [x] Direct code pasting (clipboard, drag-drop, text areas)
-- [x] Cross-browser compatibility
-- [x] Backward compatibility with existing CLI tools
+- [x] Three-tier file discovery (arena dirs, .context/inputs, CWD)
+- [x] Arena directive parsing and conflict resolution
+- [x] Prefixed filename generation
+- [x] v3+ flat layout migration
+- [x] Paste-attachments archival
+- [x] Settings auto-creation and migration
+- [x] Ignore pattern management with `use_default_ignore` toggle
+- [x] Cross-platform path resolution
+- [x] Encoding detection (UTF-8, UTF-16, BOM)
+- [x] Backward compatibility with legacy imports
 - [ ] Integration testing with actual tool execution
 - [ ] Performance benchmarking
-- [ ] Security review and penetration testing
+- [ ] Security review
+
+---
 
 ## Future Enhancements
 
 **Planned features:**
-1. **WebSocket integration:** Real-time collaborative editing
-2. **API documentation:** Comprehensive developer API
-3. **Plugin architecture:** Extensible interface for third-party extensions
-4. **Mobile app:** Native mobile applications
-5. **Cloud deployment:** Pre-built container images for easy deployment
+1. **Cost Estimator:** Calculate token cost based on API pricing (OpenAI, Anthropic, Google)
+2. **Custom Judge Personas:** `--judge security` or `--judge performance` flags
+3. **Incremental Context:** Only aggregate Git-modified files (staged/modified)
+4. **Interactive HTML Report:** Dark mode HTML with code diff viewer
+
+---
+
+## File Organization
+
+**Automatic arena naming:** `001-fix-navbar-bug` instead of just `fix-navbar-bug`
+
+**Recursive discovery:** Supports nested input file organization in `.context/inputs/`
+
+**Error handling:** Robust fallback mechanisms with graceful degradation
+
+---
+
+## Performance Considerations
+
+- **Memory efficient:** Streaming for large file processing
+- **LRU caching:** Glob pattern matching cached to reduce overhead
+- **Lazy loading:** Only load necessary components
+- **Token counting:** tiktoken with fallback estimation
+
+---
 
 ## Conclusion
 
-The enhanced context tool provides a seamless transition from CLI-only usage to a comprehensive browser-based development experience while maintaining full backward compatibility. Users can choose their preferred interface based on their workflow and platform requirements.
+The context tool provides a robust CLI-based workflow for aggregating source files and comparing LMArena model outputs. The implementation features a well-structured modular architecture with backward compatibility, flexible configuration, and multiple migration paths for evolving the output layout over time.
 
 **Key benefits:**
-- **Portability:** Same tool across any platform with browser support
-- **Accessibility:** No installation required for web-based usage
-- **Flexibility:** Multiple input and control methods
-- **Future-proof:** Extensible architecture for new features
-
-The implementation successfully addresses all requirements while providing an elegant migration path for existing users.
+- **Modularity:** Focused modules with clear responsibilities
+- **Flexibility:** Multiple input discovery methods and output formats
+- **Extensibility:** Settings-driven configuration with forward compatibility
+- **Reliability:** Comprehensive error handling and edge case management

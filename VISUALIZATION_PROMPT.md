@@ -11,7 +11,7 @@ You are a senior software architect and visualization engineer. Your task is to 
 
 ## PROJECT OVERVIEW
 
-Context is a Python tool that aggregates source files for LMArena blind pairwise AI comparisons. It has three interfaces (CLI, TUI, GUI) sharing a common core engine. The tool reads file manifests, generates aggregated code contexts, project trees, and compares AI model responses using a Gemini AI Judge.
+Context is a Python tool that aggregates source files for LMArena blind pairwise AI comparisons. It has three interfaces (CLI, TUI, GUI) sharing a common core engine. The tool reads file manifests, generates aggregated code contexts, project trees, and compares AI model responses using a Gemini AI Judge. It supports multi-arena workflows with per-arena input files, numbered arena directories, and an ignore-pattern system.
 
 ## WHAT TO VISUALIZE
 
@@ -20,36 +20,43 @@ Context is a Python tool that aggregates source files for LMArena blind pairwise
 Generate a layered architecture diagram showing:
 
 ```
-┌─────────────────────────────────────────────────┐
-│                   FRONTENDS                      │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────┐  │
-│  │ aggregator│  │aggregator│  │ aggregator_  │  │
-│  │    .py    │  │  _tui.py │  │    gui.py    │  │
-│  │  (CLI)    │  │  (TUI)   │  │    (GUI)     │  │
-│  │ argparse  │  │ Textual  │  │  Tkinter     │  │
-│  └─────┬─────┘  └────┬─────┘  └──────┬───────┘  │
-│        │              │               │           │
-├────────┼──────────────┼───────────────┼──────────┤
-│        ▼              ▼               ▼           │
-│              CORE ENGINE (core/)                  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────┐  │
-│  │ parser.py │  │ judge.py │  │ counter.py   │  │
-│  │ 823 lines │  │ 509 lines│  │  26 lines    │  │
-│  │           │  │          │  │              │  │
-│  │• file I/O │  │• Gemini  │  │• tiktoken    │  │
-│  │• paths    │  │• REST API│  │• fallback    │  │
-│  │• tree gen │  │• compare │  │• cl100k_base │  │
-│  │• settings │  │• archive │  │              │  │
-│  │• migrate  │  │• .env    │  │              │  │
-│  └──────────┘  └──────────┘  └──────────────┘  │
-└─────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│                        FRONTENDS                          │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────────────────┐│
+│  │ aggregator│  │aggregator│  │     aggregator_gui.py    ││
+│  │    .py    │  │  _tui.py │  │     (Tkinter GUI)        ││
+│  │  (CLI)    │  │  (TUI)   │  │     1195 lines           ││
+│  │ argparse  │  │ Textual  │  │                          ││
+│  └─────┬─────┘  └────┬─────┘  └──────────┬───────────────┘│
+│        │              │                    │                │
+├────────┼──────────────┼────────────────────┼───────────────┤
+│        ▼              ▼                    ▼                │
+│                CORE ENGINE (core/)                         │
+│  ┌──────────┐  ┌──────────┐  ┌────────────────────────┐  │
+│  │ parser.py │  │ judge.py │  │      counter.py        │  │
+│  │ 955 lines │  │ 615 lines│  │       52 lines         │  │
+│  │           │  │          │  │                        │  │
+│  │• file I/O │  │• Gemini  │  │• tiktoken              │  │
+│  │• paths    │  │• REST API│  │• fallback              │  │
+│  │• tree gen │  │• compare │  │• cl100k_base           │  │
+│  │• migrate  │  │• archive │  │                        │  │
+│  └──────────┘  └──────────┘  └────────────────────────┘  │
+│  ┌──────────┐  ┌──────────┐  ┌────────────────────────┐  │
+│  │arena.py  │  │settings  │  │    discovery.py        │  │
+│  │272 lines │  │  .py     │  │    312 lines           │  │
+│  │          │  │512 lines │  │                        │  │
+│  │• arenas  │  │• config  │  │• file discovery        │  │
+│  │• dirs    │  │• defaults│  │• ignore patterns       │  │
+│  │• plan    │  │• migrate │  │• arena snapshots       │  │
+│  └──────────┘  └──────────┘  └────────────────────────┘  │
+└───────────────────────────────────────────────────────────┘
 ```
 
 Show:
 - Three frontend modules at the top (CLI, TUI, GUI)
-- Three core modules at the bottom (parser, judge, counter)
+- Six core modules at the bottom (parser, judge, counter, arena, settings, discovery)
 - Arrows showing dependency direction (frontends → core, never core → frontend)
-- Zero cross-imports between core modules (show as separated boxes with no arrows between them)
+- discovery.py is the only cross-importing module (imports arena + settings)
 - Line counts and key responsibilities annotated on each box
 
 ### 2. MODULE DEPENDENCY GRAPH (Mermaid)
@@ -58,18 +65,38 @@ Generate a detailed import graph:
 
 ```mermaid
 graph TD
-    A[aggregator.py<br/>CLI Entry] --> P[core/parser.py<br/>7 imports]
-    A --> J[core/judge.py<br/>12 imports]
-    A --> C[core/counter.py<br/>1 import]
+    A[aggregator.py<br/>CLI Entry] --> P[core/parser.py<br/>File I/O + paths]
+    A --> J[core/judge.py<br/>Gemini API]
+    A --> C[core/counter.py<br/>Token counting]
+    A --> Disc[core/discovery.py<br/>File discovery]
+    A --> S[core/settings.py<br/>Configuration]
+    A --> Ar[core/arena.py<br/>Arena planning]
 
     B[aggregator_gui.py<br/>GUI Entry] --> P
     B --> J
     B --> C
+    B --> Disc
+    B --> S
+    B --> Ar
 
     D[aggregator_tui.py<br/>TUI Entry] --> P
     D --> J
     D --> C
-    D -.->|re-exports| A
+    D --> Disc
+    D --> S
+    D --> Ar
+
+    Disc --> Ar
+    Disc --> S
+
+    subgraph "Core Modules"
+        P
+        J
+        C
+        Ar
+        S
+        Disc
+    end
 
     style A fill:#89b4fa,color:#1e1e2e
     style B fill:#a6e3a1,color:#1e1e2e
@@ -77,6 +104,9 @@ graph TD
     style P fill:#cba6f7,color:#1e1e2e
     style J fill:#fab387,color:#1e1e2e
     style C fill:#94e2d5,color:#1e1e2e
+    style Ar fill:#f5c2e7,color:#1e1e2e
+    style S fill:#89dceb,color:#1e1e2e
+    style Disc fill:#f9e2af,color:#1e1e2e
 ```
 
 Color coding:
@@ -86,6 +116,9 @@ Color coding:
 - Mauve (#cba6f7) = parser
 - Orange (#fab387) = judge
 - Teal (#94e2d5) = counter
+- Pink (#f5c2e7) = arena
+- Sky (#89dceb) = settings
+- Yellow (#f9e2af) = discovery
 
 ### 3. DATA FLOW DIAGRAM (Mermaid sequence diagram)
 
@@ -95,6 +128,9 @@ Generate a sequence diagram for the complete CLI lifecycle:
 sequenceDiagram
     participant User
     participant CLI as aggregator.py
+    participant Disc as core/discovery.py
+    participant Ar as core/arena.py
+    participant S as core/settings.py
     participant Parser as core/parser.py
     participant Judge as core/judge.py
     participant Counter as core/counter.py
@@ -102,19 +138,19 @@ sequenceDiagram
     participant Gemini as Gemini API
 
     User->>CLI: python aggregator.py [--interactive]
-    CLI->>Parser: load_settings(root)
-    Parser->>FS: Read .context/settings.json
-    FS-->>Parser: settings dict
-    Parser-->>CLI: merged settings
+    CLI->>S: load_settings(root)
+    S->>FS: Read .context/settings.json
+    FS-->>S: settings dict
+    S-->>CLI: merged settings
 
     alt --interactive flag
         CLI->>User: 5 interactive prompts
         User-->>CLI: choices
-        CLI->>Parser: save_settings(root, settings)
+        CLI->>S: save_settings(root, settings)
     end
 
-    CLI->>Parser: resolve_output_dir(root, settings)
-    Parser-->>CLI: output_dir Path
+    CLI->>S: resolve_output_dir(root, settings)
+    S-->>CLI: output_dir Path
 
     CLI->>Parser: migrate_old_outputs(root, output_dir)
     Parser->>FS: Move legacy files
@@ -129,10 +165,13 @@ sequenceDiagram
     CLI->>Judge: archive_model_responses(root, archive_dir)
     Judge->>FS: Move to ARCHIVE/ with timestamps
 
-    CLI->>Parser: discover_files_txt(cwd)
-    Parser-->>CLI: [(files.txt,""), (files_1.txt,"_1")]
+    CLI->>Disc: discover_files_txt_with_directives(cwd)
+    Disc-->>CLI: [(files.txt,"",None), (files_1.txt,"_1",directive)]
 
     loop For each discovered files*.txt
+        CLI->>Ar: build_arena_plan(inputs)
+        Ar-->>CLI: ArenaAssignment records
+
         CLI->>Parser: read_file_entries(files_input)
         Parser->>FS: Read + validate paths
         Parser-->>CLI: entries list
@@ -166,7 +205,7 @@ sequenceDiagram
         Judge->>FS: Write compare.md
     end
 
-    CLI-->>User: Done. Outputs in context_output/
+    CLI-->>User: Done. Outputs in context_output/arenas/
 ```
 
 ### 4. FILE STRUCTURE VISUALIZATION (Interactive Tree)
@@ -180,32 +219,51 @@ context/
 │   └── ignore                  # User ignore patterns
 ├── .env                        # Gemini API key (gitignored)
 ├── .env.example                # API key template
-├── core/                       # Core engine (3 modules)
-│   ├── __init__.py             # Package marker (1 line)
-│   ├── parser.py               # File I/O, paths, tree, settings (823 lines)
-│   ├── judge.py                # Gemini API, compare, archive (509 lines)
-│   └── counter.py              # Token counting (26 lines)
-├── aggregator.py               # CLI entry point (469 lines)
+├── core/                       # Core engine (6 modules)
+│   ├── __init__.py             # Package marker (7 lines)
+│   ├── parser.py               # File I/O, paths, tree, migration (955 lines)
+│   ├── judge.py                # Gemini API, compare, archive (615 lines)
+│   ├── counter.py              # Token counting (52 lines)
+│   ├── arena.py                # Arena directive parsing, planning (272 lines)
+│   ├── settings.py             # Configuration, defaults, paste-attachments (512 lines)
+│   └── discovery.py            # File discovery, ignore patterns (312 lines)
+├── aggregator.py               # CLI entry point, argparse, orchestration
 ├── aggregator_gui.py           # Tkinter GUI (1195 lines)
 ├── aggregator_tui.py           # Textual TUI (513 lines)
 ├── install.py                  # Dependency installer (15 lines)
-├── prompt.txt                  # Requirements spec (193 lines)
-├── features.md                 # Feature documentation (198 lines)
-├── README.md                   # Usage guide (86 lines)
+├── renumber_arenas.py          # Arena renumbering utility (257 lines)
+├── gui/                        # Extension projects
+│   ├── browser-extension/      # Browser extension
+│   └── vscode-extension/       # VS Code extension
+├── skills/                     # Agent skills
+│   └── migrate-to-flat-layout/ # Flat-layout migration skill
+├── prompt.txt                  # Requirements specification (214 lines)
+├── features.md                 # Feature documentation (239 lines)
+├── README.md                   # Usage guide (113 lines)
 ├── requirements.txt            # Python dependencies
 ├── files.txt                   # Current input manifest
 ├── context_output/             # Generated outputs
-│   ├── arena.txt               # Aggregated source code (111KB)
-│   ├── structure.txt           # Project tree snapshot
-│   ├── compare.md              # Model comparison
-│   └── models/                 # AI model responses
-│       ├── A.txt               # Model A response
-│       ├── B.txt               # Model B response
-│       └── old/                # Legacy archives
-│           ├── 1/              # First comparison round
-│           └── 2/              # Second comparison round
-├── models/                     # Legacy root models (empty after migration)
-└── temp/                       # Temporary files
+│   ├── arenas/                 # Per-arena output directories
+│   │   ├── 001-<name>/        # Arena 001 with its own files
+│   │   │   ├── arena.md       # Arena header
+│   │   │   ├── context.md     # Aggregated source code
+│   │   │   ├── structure.txt  # Project tree snapshot
+│   │   │   ├── compare.txt    # Model comparison
+│   │   │   ├── prompt.txt     # Arena prompt
+│   │   │   ├── A.txt          # Model A response
+│   │   │   ├── B.txt          # Model B response
+│   │   │   └── ARCHIVE/       # Archived model responses
+│   │   ├── 002-<name>/
+│   │   └── ...
+│   ├── models/                 # Global model response storage
+│   │   ├── A/
+│   │   ├── B/
+│   │   ├── prompt/
+│   │   └── ARCHIVE/
+│   └── structure/              # Global structure output
+│       └── structure.txt
+├── temp/                       # Temporary files
+└── venv/                       # Python virtual environment
 ```
 
 Make each node clickable to show file details (line count, imports, functions).
@@ -327,7 +385,8 @@ stateDiagram-v2
     EnsureTemplates --> ArchiveModels : archive=true
     EnsureTemplates --> DiscoverInputs : archive=false
     ArchiveModels --> DiscoverInputs
-    DiscoverInputs --> ProcessLoop
+    DiscoverInputs --> BuildArenaPlan
+    BuildArenaPlan --> ProcessLoop
     ProcessLoop --> ReadEntries
     ReadEntries --> GenerateTree
     GenerateTree --> AggregateFiles
@@ -372,9 +431,9 @@ Build a single-page HTML dashboard with these tabs:
 
 **Tab 1: Overview**
 - Project name, description, author
-- Total lines of code (4,027)
-- Total functions (47) + methods (55)
-- Total classes (6)
+- Total lines of code (~6,066 across all source files)
+- Total functions + methods
+- Total classes
 - External APIs (1: Gemini)
 - Dependencies: tiktoken (optional), textual (optional), tkinter (stdlib)
 
@@ -398,9 +457,11 @@ Build a single-page HTML dashboard with these tabs:
   - Notes auto-merge
   - Compact mode
   - No model files exist
+  - Arena directive parsing
+  - Arena renumbering
 
 **Tab 5: Data Flow**
-- Interactive diagram showing: Input → Parse → Transform → Output
+- Interactive diagram showing: Input → Discover → Plan Arena → Parse → Transform → Output
 - Hover over each step to see what happens
 - Show file contents at each stage (files.txt → entries → arena.txt → compare.md)
 
@@ -415,8 +476,13 @@ Generate a searchable/filterable table of ALL functions across ALL files:
 
 | Module | Function | Lines | Parameters | Returns | Called By |
 |--------|----------|-------|------------|---------|-----------|
-| parser.py | find_project_root | 35-67 | path: Path | Path \| None | aggregator, gui, tui |
-| parser.py | load_settings | 120-155 | root: Path | dict | aggregator, gui |
+| parser.py | find_project_root | ... | path: Path | Path \| None | aggregator, gui, tui |
+| parser.py | load_settings | ... | root: Path | dict | aggregator, gui |
+| arena.py | parse_arena_directive | ... | first_line: str | ArenaDirective \| None | discovery |
+| arena.py | build_arena_plan | ... | inputs: set | list[ArenaAssignment] | aggregator |
+| settings.py | load_settings | ... | root: Path | dict | aggregator, gui, tui |
+| discovery.py | discover_files_txt | ... | cwd: Path | list[tuple] | aggregator |
+| discovery.py | get_latest_state | ... | root: Path | dict | aggregator |
 | ... | ... | ... | ... | ... | ... |
 
 ### 12. GIT HISTORY TIMELINE (Visual)
@@ -438,7 +504,19 @@ Jun 23 ──●── refactor: improve GUI layout
          │
 Jun 23 ──●── feat: Gemini AI judge integration
          │
-Current ──●── prompt.txt updates (archive removal, numbered arenas)
+Jun 23 ──●── feat: flat-layout refactor, arena directive system
+         │
+Jun 24 ──●── feat: core/arena.py, core/discovery.py, core/settings.py
+         │
+Jun 25 ──●── feat: per-arena output directories, numbered arenas
+         │
+Jun 26 ──●── feat: renumber_arenas.py utility, arena renumbering
+         │
+Jun 27 ──●── feat: ignore pattern system (.context/ignore)
+         │
+Jun 28 ──●── feat: paste-attachments archival, settings improvements
+         │
+Current ──●── prompt.txt updates, features.md, VISUALIZATION_PROMPT.md
 ```
 
 ## DESIGN REQUIREMENTS
@@ -475,9 +553,10 @@ Current ──●── prompt.txt updates (archive removal, numbered arenas)
 - Settings auto-created on first run
 - Legacy migration is one-time only
 - All three frontends share the same core/ engine
-- Core modules have ZERO cross-imports
+- discovery.py is the only cross-importing core module (imports arena + settings)
 - Error handling is fail-soft everywhere (never crashes)
 - The .env file contains a real API key (GEMINI_API_KEY) — do not expose it
+- Arena outputs use per-arena directories under context_output/arenas/<NNN>-<name>/
 ```
 
 ---
@@ -494,14 +573,19 @@ Current ──●── prompt.txt updates (archive removal, numbered arenas)
 
 | File | Lines | Size | Purpose |
 |------|-------|------|---------|
-| core/parser.py | 823 | 35KB | Foundation: file I/O, paths, settings, tree, migration |
-| core/judge.py | 509 | 22KB | Gemini API, compare generation, archiving |
-| core/counter.py | 26 | 1KB | Token counting (tiktoken + fallback) |
-| aggregator.py | 469 | 19KB | CLI entry point, argparse, orchestration |
+| core/parser.py | 955 | 41.1KB | Foundation: file I/O, paths, tree, migration |
+| core/judge.py | 615 | 26.2KB | Gemini API, compare generation, archiving |
+| core/settings.py | 512 | 20.7KB | Configuration, defaults, paste-attachments |
+| core/discovery.py | 312 | 14.4KB | File discovery, ignore patterns, arena snapshots |
+| core/arena.py | 272 | 11.9KB | Arena directive parsing, arena planning |
+| core/counter.py | 52 | 2KB | Token counting (tiktoken + fallback) |
+| core/__init__.py | 7 | 0.2KB | Package marker, re-exports |
+| aggregator.py | 706 | 29KB | CLI entry point, argparse, orchestration |
 | aggregator_gui.py | 1195 | 62KB | Tkinter desktop GUI |
 | aggregator_tui.py | 513 | 19KB | Textual terminal UI |
-| install.py | 15 | 1KB | Dependency installer |
-| prompt.txt | 193 | 15KB | Requirements specification |
-| features.md | 198 | 8KB | Feature documentation |
-| README.md | 86 | 9KB | Usage guide (Arabic + English) |
-| **TOTAL** | **4,027** | **~191KB** | |
+| install.py | 15 | 0.6KB | Dependency installer |
+| renumber_arenas.py | 257 | 10.4KB | Arena renumbering utility |
+| prompt.txt | 214 | 16.2KB | Requirements specification |
+| features.md | 239 | 10KB | Feature documentation |
+| README.md | 113 | 11.5KB | Usage guide |
+| **TOTAL** | **~6,066** | **~265KB** | |
