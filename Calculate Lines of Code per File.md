@@ -14,13 +14,13 @@ This document describes the implementation of line counting functionality in the
 | File | Lines |
 |------|-------|
 | `core/counter.py` | 67 |
-| `core/parser.py` | 1,170 |
-| `core/settings.py` | 616 |
-| `core/discovery.py` | 386 |
+| `core/parser.py` | 1,071 |
+| `core/settings.py` | 536 |
+| `core/discovery.py` | 382 |
 | `core/arena.py` | 333 |
 | `core/judge.py` | 729 |
 | `aggregator.py` | 810 |
-| `aggregator_gui.py` | 1,463 |
+| `aggregator_gui.py` | 1,272 |
 | `aggregator_tui.py` | 730 |
 
 ---

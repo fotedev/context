@@ -35,11 +35,13 @@ the arena directory and moves the input files into their respective arena folder
        print('Nothing to flatten.')
    "
    ```
-   This runs both Phase 1 (v2→v3 flatten) and Phase 2 (v3→v3+ rename):
+   This runs Phase 1 (v2→v3 flatten), Phase 2 (v3→v3+ rename), and Phase 3 (cleanup unprefixed legacy files):
    - Phase 1 moves files from subfolders (`arena/arena.txt`, `compare/compare.md`,
      `answers/A.txt`) to the arena root.
    - Phase 2 renames v3 files to v3+ names: `arena.txt` → `context.{ext}` (aggregate),
      `compare.{ext}` → `arena.{ext}` (compare). The extension follows `output_format`.
+   - Phase 3 reconciles unprefixed v2 leftovers: renames orphaned files to v3+ names,
+     removes duplicates when byte-identical, warns when content differs.
 
 3. **Review Output**: Check the terminal output. It should list files moving
    from subfolders to the arena root, plus any v3→v3+ renames.

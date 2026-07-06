@@ -25,7 +25,7 @@ Generate a layered architecture diagram showing:
 │  ┌──────────┐  ┌──────────┐  ┌──────────────────────────┐│
 │  │ aggregator│  │aggregator│  │     aggregator_gui.py    ││
 │  │    .py    │  │  _tui.py │  │     (Tkinter GUI)        ││
-│  │  (CLI)    │  │  (TUI)   │  │     1195 lines           ││
+│  │  (CLI)    │  │  (TUI)   │  │     1272 lines           ││
 │  │ argparse  │  │ Textual  │  │                          ││
 │  └─────┬─────┘  └────┬─────┘  └──────────┬───────────────┘│
 │        │              │                    │                │
@@ -34,7 +34,7 @@ Generate a layered architecture diagram showing:
 │                CORE ENGINE (core/)                         │
 │  ┌──────────┐  ┌──────────┐  ┌────────────────────────┐  │
 │  │ parser.py │  │ judge.py │  │      counter.py        │  │
-│  │ 955 lines │  │ 615 lines│  │       52 lines         │  │
+│  │1071 lines │  │ 615 lines│  │       52 lines         │  │
 │  │           │  │          │  │                        │  │
 │  │• file I/O │  │• Gemini  │  │• tiktoken              │  │
 │  │• paths    │  │• REST API│  │• fallback              │  │
@@ -43,11 +43,13 @@ Generate a layered architecture diagram showing:
 │  └──────────┘  └──────────┘  └────────────────────────┘  │
 │  ┌──────────┐  ┌──────────┐  ┌────────────────────────┐  │
 │  │arena.py  │  │settings  │  │    discovery.py        │  │
-│  │272 lines │  │  .py     │  │    312 lines           │  │
-│  │          │  │512 lines │  │                        │  │
+│  │272 lines │  │  .py     │  │    382 lines           │  │
+│  │          │  │536 lines │  │                        │  │
 │  │• arenas  │  │• config  │  │• file discovery        │  │
 │  │• dirs    │  │• defaults│  │• ignore patterns       │  │
 │  │• plan    │  │• migrate │  │• arena snapshots       │  │
+│  │          │  │• legacy  │  │• structural rule       │  │
+│  │          │  │  files   │  │                        │  │
 │  └──────────┘  └──────────┘  └────────────────────────┘  │
 └───────────────────────────────────────────────────────────┘
 ```

@@ -342,6 +342,7 @@ When `use_default_ignore=false`:
 | Old files in CWD | Migrate to output_dir (v3+ flat layout) |
 | Nested subdirectories in inputs | Auto-discover recursively (Tier 2), flatten to category-name format |
 | v2 per-file folder layout | Auto-flatten to v3+ flat layout on every run (idempotent) |
+| Unprefixed v2 legacy files | Auto-hidden from tree/structure.txt via structural rule; cleaned up during migration (Phase 3) |
 | `# Target Arena:` number conflict | Warn and shift to next free number (configurable) |
 | Cross-platform path resolution | Normalize Windows/POSIX separators, try suffix overlap with CWD |
 | BOM-encoded files | Handle UTF-8-BOM and UTF-16 input files |

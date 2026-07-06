@@ -84,7 +84,15 @@ DEFAULT_SETTINGS = {
 - Reads patterns from `.context/ignore`
 - `use_default_ignore` setting controls auto-creation of default patterns
 - Default patterns include: `.git`, `node_modules`, `venv`, `__pycache__`, `context_output`, `.context`, etc.
+- Default patterns also include legacy unprefixed arena files (A-F.txt, arena.md, context.md, etc.)
 - LRU-cached glob matching for performance
+
+**Structural Arena-File Rule (`_is_unprefixed_arena_file`):**
+- Filters unprefixed v2 legacy files from tree/structure.txt regardless of user ignore settings
+- Applies even when `use_default_ignore` is False (structural invariant)
+- Only affects files inside `<output_dir>/arenas/<NNN-name>/` directories
+- Files must carry the arena's `NNN-` prefix to pass the filter
+- Subdirectories (like ARCHIVE/) are exempt; their contents are filtered individually
 
 ### 3. Arena Directive Parsing (`core/arena.py`)
 
@@ -137,7 +145,15 @@ context_output/
 **Flat layout migration (`migrate_to_flat_layout`):**
 - Phase 1: v2 → v3 flat (flatten subfolders into arena root)
 - Phase 2: v3 → v3+ rename (`arena.txt` → `context.{ext}`, `compare.{ext}` → `arena.{ext}`)
+- Phase 3: Cleanup unprefixed v3 leftovers (rename or deduplicate legacy files)
 - Supports dry-run mode for preview
+
+**Legacy file cleanup (`_cleanup_unprefixed_legacy_files`):**
+- Reconciles unprefixed v2 leftovers against canonical v3+ prefixed names
+- Renames orphaned unprefixed files to v3+ names (idempotent)
+- Removes duplicates when content is byte-identical
+- Warns when content differs (requires manual review)
+- Never deletes prefixed files or divergent content
 
 ### 6. Paste-Attachments Archival
 
