@@ -168,6 +168,7 @@ def generate_tree(
     patterns: frozenset[str],
     prefix: str = "",
     _depth: int = 0,
+    output_dir: str = "context_output",
 ) -> list[str]:
     """Recursively build a visual directory tree.
 
@@ -175,12 +176,19 @@ def generate_tree(
     infinite loops on circular links.  Traversal stops at ``_MAX_TREE_DEPTH``
     regardless of structure depth.
 
+    The *output_dir* parameter is forwarded to :func:`should_ignore` so the
+    structural arena-file rule can locate arena dirs even when the user has
+    configured a custom output directory name.
+
     Args:
         dir_path: Directory to scan at the current recursion level.
         root: Project root, used by :func:`should_ignore`.
         patterns: Glob patterns identifying items to exclude.
         prefix: Accumulated indentation string (internal, set by recursion).
         _depth: Current recursion depth (internal, set by recursion).
+        output_dir: Configured output directory name (default
+            ``"context_output"``). Threaded down so the structural
+            un-prefixed-arena-file rule can match correctly.
 
     Returns:
         Lines forming the visual tree, without a trailing newline each.
@@ -195,7 +203,7 @@ def generate_tree(
             dir_path.iterdir(),
             key=lambda p: (not p.is_dir(), p.name.lower()),
         )
-        items = [i for i in items if not should_ignore(i, root, patterns)]
+        items = [i for i in items if not should_ignore(i, root, patterns, output_dir)]
     except PermissionError:
         return [f"{prefix}[Permission Denied]"]
 
@@ -213,7 +221,14 @@ def generate_tree(
         if item.is_dir() and not item.is_symlink():
             child_prefix = prefix + ("    " if is_last else "│   ")
             tree.extend(
-                generate_tree(item, root, patterns, child_prefix, _depth + 1)
+                generate_tree(
+                    item,
+                    root,
+                    patterns,
+                    child_prefix,
+                    _depth + 1,
+                    output_dir,
+                )
             )
 
     return tree

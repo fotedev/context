@@ -645,8 +645,9 @@ def main() -> None:
     # --- Centralize structure.txt and Drift Detection --------------------
     # Build live directory tree representation
     scan_root = root if root else cwd
+    output_dir_name = str(settings.get("output_dir", "context_output"))
     tree_lines = [f"Project Root: {scan_root.name}/"] + generate_tree(
-        scan_root, scan_root, patterns
+        scan_root, scan_root, patterns, output_dir=output_dir_name
     )
     live_structure = "\n".join(tree_lines)
 

@@ -892,9 +892,12 @@ class AggregatorGUI(tk.Tk):
         patterns = load_ignore_patterns(root, settings)
         queued_resolved = {p.resolve() for p, _r, _i in self._current_queue_entries()}
         filter_text = self._search_var.get().strip().lower()
+        output_dir = str(settings.get("output_dir", "context_output"))
 
         self._tree_title.configure(text=f"📁  {root}")
-        self._populate_tree("", root, root, patterns, queued_resolved, filter_text)
+        self._populate_tree(
+            "", root, root, patterns, queued_resolved, filter_text, output_dir
+        )
         self._log_write(f"Tree loaded: {root}", tag="info")
 
     def _populate_tree(
@@ -905,6 +908,7 @@ class AggregatorGUI(tk.Tk):
         patterns: frozenset[str],
         queued: set[Path],
         filter_text: str,
+        output_dir: str = "context_output",
         depth: int = 0,
     ) -> None:
         """Recursively insert directory contents into the Treeview widget."""
@@ -919,7 +923,7 @@ class AggregatorGUI(tk.Tk):
             return
 
         for item in items:
-            if should_ignore(item, root, patterns):
+            if should_ignore(item, root, patterns, output_dir):
                 continue
 
             # Apply search filter to file names (directories always shown)
@@ -935,7 +939,14 @@ class AggregatorGUI(tk.Tk):
                     values=[str(item)],
                 )
                 self._populate_tree(
-                    iid, item, root, patterns, queued, filter_text, depth + 1
+                    iid,
+                    item,
+                    root,
+                    patterns,
+                    queued,
+                    filter_text,
+                    output_dir,
+                    depth + 1,
                 )
             elif item.is_file():
                 in_queue = item.resolve() in queued

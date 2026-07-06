@@ -25,6 +25,12 @@ from core.arena import ArenaDirective, _safe_read_directive
 from core.settings import ensure_context_dir, write_default_ignore_if_enabled
 
 
+# Matches the numeric prefix of an arena directory name, e.g. "001" in
+# "001-files". The arena number is captured in group 1 so callers can
+# reconstruct the expected filename prefix (``001-``).
+_ARENA_DIR_RE = re.compile(r"^(\d+)-(.+)$")
+
+
 # ---------------------------------------------------------------------------
 # Ignore-pattern management (Req 8)
 #
@@ -113,12 +119,20 @@ def _check_glob_match(path_str: str, patterns: frozenset[str]) -> bool:
     return any(fnmatch.fnmatch(path_str, pat) for pat in patterns)
 
 
-def should_ignore(path: Path, root: Path, patterns: frozenset[str]) -> bool:
+def should_ignore(
+    path: Path,
+    root: Path,
+    patterns: frozenset[str],
+    output_dir: str = "context_output",
+) -> bool:
     """Decide whether *path* matches any exclusion pattern.
 
     Matching is performed against:
     * The full POSIX relative path (e.g. ``src/utils/helper.py``).
     * Each individual path component (e.g. ``src``, ``utils``, ``helper.py``).
+    * The structural rule for un-prefixed files inside arena directories
+      (see :func:`_is_unprefixed_arena_file`) — always applies, even when
+      ``use_default_ignore`` is ``False``.
 
     Uses :func:`_check_glob_match` with LRU caching to avoid redundant
     regex compilations across repeated calls with the same pattern set.
@@ -127,6 +141,8 @@ def should_ignore(path: Path, root: Path, patterns: frozenset[str]) -> bool:
         path: Path to evaluate.
         root: Project root used to compute the relative path.
         patterns: Compiled set of glob patterns.
+        output_dir: Configured output directory name (default
+            ``"context_output"``). Used by the structural arena-file rule.
 
     Returns:
         ``True`` if *path* should be excluded from processing.
@@ -145,7 +161,76 @@ def should_ignore(path: Path, root: Path, patterns: frozenset[str]) -> bool:
         if _check_glob_match(part, patterns):
             return True
 
+    # Structural rule: un-prefixed files inside arena dirs are legacy
+    # v2-layout leftovers. They do NOT belong in the tree regardless of
+    # what the user's ignore file says — the v3 prefixed flat layout is
+    # the canonical contract.
+    if _is_unprefixed_arena_file(path, root, output_dir):
+        return True
+
     return False
+
+
+def _is_unprefixed_arena_file(
+    path: Path, root: Path, output_dir: str = "context_output"
+) -> bool:
+    """Return ``True`` when *path* is a file inside an arena dir that does
+    NOT carry the arena's numeric prefix.
+
+    Arena directories live at ``<output_dir>/arenas/<NNN>-<name>/``. The
+    v3 flat layout requires every file inside them to start with
+    ``<NNN>-``. Files that don't (e.g. ``A.txt``, ``arena.md``,
+    ``context.md``, ``prompt.txt``) are leftovers from the v2 layout
+    that pre-dated the prefix convention — they should never show up
+    in ``structure.txt``.
+
+    Only FILES are filtered by this rule. Subdirectory names like
+    ``ARCHIVE/`` are exempt: they're part of the structural layout and
+    their *contents* are filtered individually (each child file is
+    checked against the same prefix rule).
+
+    This rule is independent of the user's ``.context/ignore`` patterns,
+    so it applies even when ``use_default_ignore`` is ``False``. It is
+    a structural invariant of the v3 layout, not a user preference.
+
+    Args:
+        path: Path to evaluate. Only files (not directories) are matched.
+        root: Project root used to compute the relative path.
+        output_dir: Configured output directory name (default
+            ``"context_output"``).
+
+    Returns:
+        ``True`` when *path* is a file directly inside an arena dir whose
+        name does not start with the arena's ``<NNN>-`` prefix.
+    """
+    # Directories are exempt — we still want to descend into ARCHIVE/ etc.
+    if path.is_dir():
+        return False
+
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return False  # outside root — never auto-ignore
+
+    parts = rel.parts
+    # Need at least: <output_dir>/arenas/<arena_dir>/<file>
+    if len(parts) < 4:
+        return False
+    if parts[0] != output_dir or parts[1] != "arenas":
+        return False
+
+    arena_dir_name = parts[2]
+    m = _ARENA_DIR_RE.match(arena_dir_name)
+    if not m:
+        return False  # not a numbered arena dir (e.g. "ARCHIVE")
+
+    prefix = m.group(1)  # e.g. "001", "002", "123"
+    expected_prefix = f"{prefix}-"
+
+    # The filename being checked is the last path component. We don't
+    # care about depth — files inside ARCHIVE/, subdirs/, etc. are all
+    # checked the same way.
+    return not parts[-1].startswith(expected_prefix)
 
 
 # ---------------------------------------------------------------------------

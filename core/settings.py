@@ -112,6 +112,30 @@ files_*.txt
 arena_*.txt
 arena_*.md
 structure_*.txt
+
+# Un-prefixed (legacy v2 layout) files inside arena directories.
+# The v3 flat layout prefixes every arena file with the arena's
+# NNN- number (e.g. ``001-A.txt``, ``001-arena.md``). Files that
+# don't carry the prefix (e.g. ``A.txt``, ``arena.md``, ``context.md``,
+# ``prompt.txt``) are leftovers from the pre-prefix era and should
+# never appear in ``structure.txt``. The tool also enforces this as
+# a structural rule independent of this ignore file, but listing the
+# patterns here keeps the contract visible and lets users who manage
+# their own ignore file reproduce the same behaviour.
+context_output/arenas/*/A.txt
+context_output/arenas/*/B.txt
+context_output/arenas/*/C.txt
+context_output/arenas/*/D.txt
+context_output/arenas/*/arena.md
+context_output/arenas/*/arena.txt
+context_output/arenas/*/context.md
+context_output/arenas/*/context.txt
+context_output/arenas/*/prompt.txt
+context_output/arenas/*/structure.txt
+context_output/arenas/*/llm.txt
+context_output/arenas/*/compare.md
+context_output/arenas/*/compare.txt
+
 models
 models/old
 get-shit-done

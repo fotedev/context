@@ -388,8 +388,9 @@ class AggregatorTUI(App[None]):
             path_input.value = str(root)
         settings = load_settings(root)
         patterns = load_ignore_patterns(root, settings)
+        output_dir = str(settings.get("output_dir", "context_output"))
 
-        self._populate_tree(scroll, root, root, patterns)
+        self._populate_tree(scroll, root, root, patterns, output_dir)
         self.log_message(f"[tree] Loaded from: {root}", "info")
 
     def _populate_tree(
@@ -398,6 +399,7 @@ class AggregatorTUI(App[None]):
         dir_path: Path,
         root: Path,
         patterns: frozenset[str],
+        output_dir: str = "context_output",
         depth: int = 0,
     ) -> None:
         """Recursively mount TreeEntry widgets for files and Labels for directories."""
@@ -421,13 +423,15 @@ class AggregatorTUI(App[None]):
                 pass
 
         for item in items:
-            if should_ignore(item, root, patterns):
+            if should_ignore(item, root, patterns, output_dir):
                 continue
 
             indent = "  " * depth
             if item.is_dir() and not item.is_symlink():
                 container.mount(Label(f"{indent}📁 {item.name}/"))
-                self._populate_tree(container, item, root, patterns, depth + 1)
+                self._populate_tree(
+                    container, item, root, patterns, output_dir, depth + 1
+                )
             elif item.is_file():
                 entry = TreeEntry(
                     f"{indent}  {item.name}",
