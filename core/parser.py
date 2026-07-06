@@ -1032,6 +1032,117 @@ def _flatten_answers(arena_dir: Path, moved: list[Path]) -> None:
             moved.append(target)
 
 
+def _cleanup_unprefixed_legacy_files(
+    arena_dir: Path,
+    settings: dict[str, object],
+    removed: list[Path],
+) -> None:
+    """Reconcile unprefixed v3 leftovers against the canonical v3+ prefixed names.
+
+    After the v2→v3→v3+ migration, an arena directory may be in one of two
+    intermediate states:
+
+    1. **Both versions present** — newer runs created ``<prefix>-arena.md``
+       next to the legacy ``arena.md``, etc. The prefixed copy is the
+       canonical v3+ file; the unprefixed copy is dead weight. When the
+       two copies have byte-identical content the unprefixed file is
+       deleted. When they differ, both are kept and a warning is printed
+       (the user must resolve manually — divergent content is real data).
+
+    2. **Only the unprefixed version present** — older arenas that were
+       created with the v3 (unprefixed) layout and never re-aggregated.
+       The unprefixed file is renamed in place to its prefixed v3+ name.
+       This is a one-time conversion, idempotent on a re-run because the
+       rename target already exists.
+
+    Safety rules:
+
+    * Prefixed files are NEVER deleted — they are the canonical v3+ files.
+    * Unprefixed files are NEVER deleted when their prefixed counterpart
+      is missing — instead they get renamed.
+    * Unprefixed files are NEVER deleted when content differs — only
+      removed when content is byte-identical.
+    * Empty directories left behind after renames are NOT pruned here
+      (none are expected — only files move).
+
+    Args:
+        arena_dir: Arena directory whose legacy files to reconcile.
+        settings: Effective settings dict (used to resolve the canonical
+            output extension from ``output_format``).
+        removed: Mutable list that accumulates removed/renamed paths for
+            the caller's reporting.
+    """
+    prefix, _, arena_name = arena_dir.name.partition("-")
+    if not prefix.isdigit() or not arena_name:
+        return  # arena dir name doesn't follow the NNN-<name> convention
+
+    fmt = str(settings.get("output_format", "md")).lower().lstrip(".")
+    ext = fmt if fmt in ("md", "txt") else "md"
+
+    # (unprefixed_name, prefixed_name) pairs to reconcile. The unprefixed
+    # name is the legacy v3 spelling; the prefixed name is the v3+
+    # canonical spelling returned by :func:`core.arena.arena_filenames`
+    # plus the model-response letters.
+    pairs: list[tuple[str, str]] = [
+        # Aggregate (context.{ext})
+        (f"context.{ext}", f"{prefix}-context.{ext}"),
+        # Compare (arena.{ext})
+        (f"arena.{ext}", f"{prefix}-arena.{ext}"),
+        # Prompt (answers/prompt.txt was moved up to arena root)
+        ("prompt.txt", f"{prefix}-prompt.txt"),
+        # Input legacy (ArenaName.txt → <prefix>-<ArenaName>.txt)
+        (f"{arena_name}.txt", f"{prefix}-{arena_name}.txt"),
+        # Compare legacy names — defensive, in case phase 2 left them
+        # because the user had a stale extension.
+        ("compare.md", f"{prefix}-compare.md"),
+        ("compare.txt", f"{prefix}-compare.txt"),
+    ]
+    # Model-response files (A–F) — see ``_ANSWERS_MODEL_LETTERS``.
+    for letter in _ANSWERS_MODEL_LETTERS:
+        pairs.append((f"{letter}.txt", f"{prefix}-{letter}.txt"))
+
+    for unprefixed_name, prefixed_name in pairs:
+        unprefixed = arena_dir / unprefixed_name
+        prefixed = arena_dir / prefixed_name
+        if not unprefixed.is_file():
+            continue  # nothing to reconcile for this pair
+
+        if not prefixed.is_file():
+            # State 2: only the unprefixed version exists. Rename it to the
+            # v3+ prefixed name (idempotent — a re-run finds no source).
+            try:
+                _ = unprefixed.rename(prefixed)
+                removed.append(unprefixed)
+            except OSError as exc:
+                print(
+                    f"Warning: could not rename {unprefixed} → {prefixed}: {exc}",
+                    file=sys.stderr,
+                )
+            continue
+
+        # State 1: both exist. Compare content byte-for-byte.
+        try:
+            same = unprefixed.read_bytes() == prefixed.read_bytes()
+        except OSError:
+            same = False
+        if same:
+            try:
+                _ = unprefixed.unlink()
+                removed.append(unprefixed)
+            except OSError as exc:
+                print(
+                    f"Warning: could not remove {unprefixed}: {exc}",
+                    file=sys.stderr,
+                )
+        else:
+            print(
+                f"Note: kept both {unprefixed_name} and {prefixed_name} "
+                f"in {arena_dir.name}/ (content differs — manual review "
+                "needed).",
+                file=sys.stderr,
+            )
+
+
 def _prune_empty_subdirs(arena_dir: Path) -> None:
     """Remove the now-empty v2 subfolders from an arena directory.
 
@@ -1120,6 +1231,10 @@ def migrate_to_flat_layout(
                 # compare.{ext} → arena.{ext}). Done after phase 1 so the
                 # just-flattened arena.txt / compare.{ext} files are renamed.
                 _rename_v3_to_v3plus(arena_dir, eff_settings, moved)
+                # Phase 3: drop redundant unprefixed v3 leftovers when the
+                # v3+ prefixed copy is present and byte-identical. Safe and
+                # idempotent — never touches the prefixed files.
+                _cleanup_unprefixed_legacy_files(arena_dir, eff_settings, moved)
 
     if moved and not dry_run:
         rels = ", ".join(str(p.relative_to(output_dir)) for p in moved[:10])
