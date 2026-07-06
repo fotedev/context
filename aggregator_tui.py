@@ -569,8 +569,9 @@ class AggregatorTUI(App[None]):
             structure_txt = output_dir / "structure" / "structure.txt"
 
             if root:
+                output_dir_name = str(settings.get("output_dir", "context_output"))
                 tree_lines = [f"Project Root: {root.name}/"] + generate_tree(
-                    root, root, patterns
+                    root, root, patterns, output_dir=output_dir_name
                 )
                 structure_txt.write_text("\n".join(tree_lines), encoding="utf-8")
                 self.log_message(f"[ok] structure written to {structure_txt.name}", "success")

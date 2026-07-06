@@ -1240,8 +1240,9 @@ class AggregatorGUI(tk.Tk):
                 self._log_write(f"[{files_input.name}] Queue: {' + '.join(summary_parts)}", tag="info")
 
                 # ── Step 2: Project tree ──────────────────────────────────────
+                output_dir_name = str(settings.get("output_dir", "context_output"))
                 tree_lines = [f"Project Root: {root.name}/"] + generate_tree(
-                    root, root, patterns
+                    root, root, patterns, output_dir=output_dir_name
                 )
                 structure_path.write_text("\n".join(tree_lines), encoding="utf-8")
                 self._log_write(f"[{files_input.name}] structure written → {structure_path.name}", tag="ok")

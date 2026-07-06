@@ -126,6 +126,8 @@ context_output/arenas/*/A.txt
 context_output/arenas/*/B.txt
 context_output/arenas/*/C.txt
 context_output/arenas/*/D.txt
+context_output/arenas/*/E.txt
+context_output/arenas/*/F.txt
 context_output/arenas/*/arena.md
 context_output/arenas/*/arena.txt
 context_output/arenas/*/context.md
