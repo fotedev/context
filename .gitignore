@@ -23,3 +23,17 @@ aggregator_tui.py.log
 __init__.py.log
 ARCHIVE*
 /full-chat.txt
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE configs
+.vscode/
+
+# Log files
+*.log
+
+# Temp directories
+temp/
+tmp/
