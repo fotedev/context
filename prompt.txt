@@ -3,7 +3,7 @@ You are a senior Python developer improving a CLI tool called "context" (arena-c
 </role>
 
 <context>
-The tool has three entry points: aggregator.py (CLI), aggregator_tui.py, aggregator_gui.py. The core logic lives in core/ (parser.py, counter.py, judge.py). Currently it reads a single files.txt, generates arena.txt (aggregated code), structure.txt (project tree), and compare.md (model comparison via Gemini judge).
+The tool has three entry points: aggregator.py (CLI), aggregator_tui.py, aggregator_gui.py. The core logic lives in core/ (parser.py, settings.py, discovery.py, arena.py, counter.py, judge.py). Each arena uses v3+ prefixed flat layout: all files inside arena dirs carry the NNN- prefix (e.g. NNN-context.md, NNN-arena.md, NNN-A.txt). Legacy unprefixed v2 files are auto-filtered from the tree via a structural rule in should_ignore(). A Phase 3 migration step (_cleanup_unprefixed_legacy_files) renames or deduplicates leftover v2 files during each run.
 
 Project root detection: find_project_root() in parser.py searches parent directories for markers (.git, package.json, pyproject.toml, requirements.txt, src). The first file path in files.txt is used as the starting point.
 
@@ -16,7 +16,16 @@ Compact mode in core/judge.py does: (1) removes "### Notes" sections, (2) collap
 Main entry point. Reads files.txt → generates arena.txt, structure.txt, compare.md. Has hardcoded input() prompts for Gemini judge and compact mode.
 </file>
 <file path="core/parser.py">
-File parsing, path resolution, tree generation, ignore patterns. _DEFAULT_IGNORE is a hardcoded frozenset. read_file_entries() skips blank lines and # comments.
+File parsing, path resolution, tree generation, migration (3 phases: flatten, rename, legacy cleanup). generate_tree() threads output_dir param. migrate_to_flat_layout() includes Phase 3 _cleanup_unprefixed_legacy_files.
+</file>
+<file path="core/settings.py">
+Settings management, _DEFAULT_IGNORE_TEMPLATE (includes legacy arena file patterns like A-F.txt, arena.md, context.md), paste-attachments archival. use_default_ignore toggle.
+</file>
+<file path="core/discovery.py">
+Three-tier file discovery, ignore-pattern matching with LRU cache, arena-state snapshotting. should_ignore() includes structural _is_unprefixed_arena_file() rule that filters unprefixed v2 files from tree regardless of user ignore settings.
+</file>
+<file path="core/arena.py">
+Arena directive parsing (# Target Arena: NNN-name), conflict resolution (build_arena_plan), arena_filenames() and arena_model_filename() helpers for v3+ prefixed naming.
 </file>
 <file path="core/counter.py">
 Token counting using tiktoken.
@@ -48,7 +57,7 @@ Legacy VS Code extension for backward compatibility:
 </current_code>
 
 <requirement id="1" priority="high">
-OUTPUT ORGANIZATION: Create a dedicated output folder (context_output/) instead of dumping files in the current working directory (CWD). All generated files (e.g. arena.txt, structure.txt, compare.md, and their multi-file equivalents) must be written inside this folder. The output folder path must be configurable via the --output flag.
+OUTPUT ORGANIZATION: Create a dedicated output folder (context_output/) instead of dumping files in the current working directory (CWD). All generated files must be written inside this folder using v3+ prefixed flat layout: each arena dir contains files with the NNN- prefix (e.g. NNN-context.{md,txt} for aggregated code, NNN-arena.{md,txt} for comparison, NNN-A.txt for model responses). The output folder path must be configurable via the --output flag. Legacy unprefixed v2 files are auto-filtered from the tree via a structural rule in should_ignore().
 </requirement>
 
 <requirement id="2" priority="high">
@@ -117,7 +126,7 @@ INPUT ORGANIZATION: Move input file discovery from CWD to a dedicated subdirecto
   - First arena: ``context_output/arenas/001-fix-navbar-bug/``
   - Second arena: ``context_output/arenas/002-refactor-api/``
   - Re-running the same name: ``context_output/arenas/003-fix-navbar-bug/`` (never overwrites, always increments)
-- Each arena folder contains: ``arena.txt``, ``structure.txt``, ``compare.md``.
+- Each arena folder contains prefixed files: ``NNN-<name>.txt`` (input), ``NNN-context.{md,txt}`` (aggregated), ``NNN-arena.{md,txt}`` (comparison), ``NNN-prompt.txt``, ``NNN-A.txt``, ``NNN-B.txt`` (model responses).
 - The next arena number is determined by scanning existing folders in ``context_output/arenas/`` and taking ``max(numbers) + 1``.
 - The agent (AI coding tool) is responsible for creating input files in ``.context/inputs/`` with descriptive names derived from the user's conversation/prompt (e.g. user asks "fix navbar bug" → agent creates ``.context/inputs/fix-navbar-bug.txt``).
 - Settings key: ``"inputs_dir": ".context/inputs"`` (configurable).
@@ -139,7 +148,12 @@ PERSISTENT SETTINGS SCHEMA: The settings file (.context/settings.json) must conf
   "model_count": 2,
   "gemini_judge": false,
   "compact_mode": false,
-  "inputs_dir": ".context/inputs"
+  "archive": false,
+  "archive_dir": "ARCHIVE",
+  "paste_attachments_enabled": false,
+  "respect_target_arena_directive": true,
+  "on_arena_number_conflict": "warn_and_shift",
+  "use_default_ignore": true
 }
 </requirement>
 
@@ -149,7 +163,7 @@ SETTINGS CLI flag: Add a --settings CLI flag. When passed, the script must print
 </requirements>
 
 <edge_cases>
-<case id="1" input="empty files.txt" action="Create empty arena folder with empty templates (arena.txt, structure.txt, compare.md) inside context_output/arenas/NNN-name/." />
+<case id="1" input="empty files.txt" action="Create empty arena folder with empty templates (NNN-context.{ext}, NNN-arena.{ext}) inside context_output/arenas/NNN-name/." />
 <case id="2" input="invalid settings.json" action="Fall back to defaults. Print warning to stderr every run. If settings.json is completely empty, print: 'Use context skill with AI model to initialize preferences.'" />
 <case id="3" input="model_count=4 but only 2 files" action="Auto-create empty C.txt, D.txt. Prompt user to paste content." />
 <case id="4" input="arena name already has a numbered folder" action="Increment the number. If 001-fix-navbar exists, next is 002-fix-navbar. Never overwrite existing arenas." />
@@ -160,6 +174,7 @@ SETTINGS CLI flag: Add a --settings CLI flag. When passed, the script must print
 <case id="9" input=".context/inputs/ does not exist" action="Fall back to CWD files.txt. If CWD files.txt also does not exist, print 'No input files found' and exit gracefully." />
 <case id="10" input="CWD files.txt exists on first run" action="Skipped (no auto-migration). The AI agent must run the organize-root skill to move them." />
 <case id="11" input="root models/ has old/N/ archives" action="Skipped (no auto-migration). The AI agent must run the organize-root skill to move them." />
+<case id="12" input="legacy unprefixed v2 files in arena dirs" action="Auto-filtered from structure.txt via structural rule in should_ignore(). Phase 3 migration renames orphaned files to NNN- prefix, removes duplicates when byte-identical, warns when content differs." />
 </edge_cases>
 
 <constraints>
@@ -192,7 +207,9 @@ C:/proj/src/layouts/MainLayout.tsx:45-80
   "model_count": 4,
   "gemini_judge": true,
   "compact_mode": true,
-  "inputs_dir": ".context/inputs"
+  "archive": false,
+  "use_default_ignore": true,
+  "respect_target_arena_directive": true
 }
 </settings.json>
 → Run uses these settings silently. If --interactive is passed, these settings act as the default choices.
@@ -205,12 +222,18 @@ C:/proj/src/layouts/MainLayout.tsx:45-80
   refactor-auth-api.txt    (agent created from "refactor auth API" conversation)
 
 Tool discovers both → produces:
-  context_output/arenas/001-fix-navbar-bug/arena.txt
-  context_output/arenas/001-fix-navbar-bug/structure.txt
-  context_output/arenas/001-fix-navbar-bug/compare.md
-  context_output/arenas/002-refactor-auth-api/arena.txt
-  context_output/arenas/002-refactor-auth-api/structure.txt
-  context_output/arenas/002-refactor-auth-api/compare.md
+  context_output/arenas/001-fix-navbar-bug/001-fix-navbar-bug.txt
+  context_output/arenas/001-fix-navbar-bug/001-context.md
+  context_output/arenas/001-fix-navbar-bug/001-arena.md
+  context_output/arenas/001-fix-navbar-bug/001-prompt.txt
+  context_output/arenas/001-fix-navbar-bug/001-A.txt
+  context_output/arenas/001-fix-navbar-bug/001-B.txt
+  context_output/arenas/002-refactor-auth-api/002-refactor-auth-api.txt
+  context_output/arenas/002-refactor-auth-api/002-context.md
+  context_output/arenas/002-refactor-auth-api/002-arena.md
+  context_output/arenas/002-refactor-auth-api/002-prompt.txt
+  context_output/arenas/002-refactor-auth-api/002-A.txt
+  context_output/arenas/002-refactor-auth-api/002-B.txt
 
 Re-running fix-navbar-bug later → 003-fix-navbar-bug/ (never overwrites).
 Fallback: if .context/inputs/ doesn't exist, CWD files.txt is used instead.
@@ -229,16 +252,12 @@ The tool expects this layout to be active and does not modify the structure auto
 </examples>
 
 <deliverable>
-Implement this in three phases to ensure no code is truncated or skipped:
-
-PHASE 1 (DO THIS NOW):
-Update core/parser.py and core/judge.py according to the requirements. Include the new INPUT ORGANIZATION requirement (Req 8) — implement .context/inputs/ discovery, CWD fallback (without auto-migration), and arena subfolder output structure. Provide the FULL, complete code for both files without omitting anything or using placeholders.
-
-PHASE 2 (WAIT FOR MY CUE):
-After you provide Phase 1, I will reply with "Continue to Phase 2", and then you will provide the complete, fully updated aggregator.py.
-
-PHASE 3 (IF NEEDED):
-Update aggregator_gui.py and aggregator_tui.py to support the new .context/inputs/ workflow and arena subfolder structure.
+The refactored codebase is already complete:
+- Module decomposition: parser.py split into parser.py, settings.py, discovery.py, arena.py
+- v3+ prefixed flat layout with 3-phase migration (flatten → rename → legacy cleanup)
+- Structural arena-file filtering rule in should_ignore()
+- Default ignore patterns for legacy unprefixed arena files
+- output_dir threading through all UI entry points
 
 Follow these quality guidelines:
 1. Write clean, idiomatic Python code.
