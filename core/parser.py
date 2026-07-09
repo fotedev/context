@@ -12,8 +12,23 @@ from __future__ import annotations
 import re
 import shutil
 import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
+
+from core.arena import (  # noqa: F401  (re-export)
+    ArenaAssignment,
+    ArenaDirective,
+    build_arena_plan,
+    resolve_arena_dir,
+)
+from core.discovery import (  # noqa: F401  (re-export)
+    discover_files_txt,
+    discover_files_txt_with_directives,
+    get_latest_state,
+    load_ignore_patterns,
+    should_ignore,
+    write_state_breadcrumb,
+)
 
 # Re-export from the new focused modules. These names exist precisely so
 # `from core.parser import X` continues to work for every caller — do not
@@ -25,20 +40,6 @@ from core.settings import (  # noqa: F401  (re-export)
     load_settings,
     save_settings,
     sync_paste_attachments,
-)
-from core.discovery import (  # noqa: F401  (re-export)
-    discover_files_txt,
-    discover_files_txt_with_directives,
-    get_latest_state,
-    load_ignore_patterns,
-    should_ignore,
-    write_state_breadcrumb,
-)
-from core.arena import (  # noqa: F401  (re-export)
-    ArenaAssignment,
-    ArenaDirective,
-    build_arena_plan,
-    resolve_arena_dir,
 )
 
 # ---------------------------------------------------------------------------
@@ -545,7 +546,10 @@ def aggregate_files(
                 header = f"# --- FILE: {display} ({line_count} lines) ---"
             elif is_important:
                 range_str = ",".join(f"{s}-{e}" for s, e in line_ranges)
-                header = f"# --- IMPORTANT STRUCTURE: {display} [{range_str}] ({line_count} lines) ---"
+                header = (
+                    f"# --- IMPORTANT STRUCTURE: {display} "
+                    f"[{range_str}] ({line_count} lines) ---"
+                )
             else:
                 range_str = ",".join(f"{s}-{e}" for s, e in line_ranges)
                 header = f"# --- SNIPPET: {display} [{range_str}] ({line_count} lines) ---"
@@ -583,7 +587,7 @@ def resolve_output_dir(
     Returns:
         Path to the output directory (created if necessary).
     """
-    dir_name = cli_output or settings.get("output_dir", "context_output")
+    dir_name = cli_output or settings.output.dir
     output_dir = root / str(dir_name)
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
@@ -1076,7 +1080,7 @@ def _cleanup_unprefixed_legacy_files(
     if not prefix.isdigit() or not arena_name:
         return  # arena dir name doesn't follow the NNN-<name> convention
 
-    fmt = str(settings.get("output_format", "md")).lower().lstrip(".")
+    fmt = str(settings.output.format).lower().lstrip(".")
     ext = fmt if fmt in ("md", "txt") else "md"
 
     # (unprefixed_name, prefixed_name) pairs to reconcile. The unprefixed

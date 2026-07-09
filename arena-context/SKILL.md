@@ -27,7 +27,7 @@ Prepares context for Blind Pairwise Comparisons and Arena Expert prompts on LMAr
 | Config directory | `.context/` containing `settings.json` and `ignore` |
 | Aggregator script (do NOT run) | Linux/WSL: `/mnt/data/programming/Python/Projects/context/aggregator.py` · Windows: `C:/programming/Python/Projects/context/aggregator.py` |
 | Models directory | `context_output/models/` containing `prompt.txt`, model responses (`A.txt`, `B.txt`, etc.), and notes |
-| Size budget | Keep aggregated total ≤ 4000–5000 lines across all selected files and snippets |
+| Size budget | Keep aggregated total ≤ 5000 lines across all selected files and snippets |
 
 ## Workflow
 1. **ANALYZE** — Classify the problem: logic, UI, runtime, config, or dependency.

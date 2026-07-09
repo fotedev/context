@@ -1,0 +1,7 @@
+# VS Code extension packaging (.vsce ignores everything that is not source).
+out/
+node_modules/
+*.vsix
+.DS_Store
+.vscode-test/
+.vscode/

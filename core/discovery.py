@@ -19,11 +19,9 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import cast
 
 from core.arena import ArenaDirective, _safe_read_directive
 from core.settings import ensure_context_dir, write_default_ignore_if_enabled
-
 
 # Matches the numeric prefix of an arena directory name, e.g. "001" in
 # "001-files". The arena number is captured in group 1 so callers can

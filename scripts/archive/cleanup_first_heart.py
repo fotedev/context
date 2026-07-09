@@ -604,7 +604,10 @@ def apply_changes(plans: list[ArenaPlan], project_root: Path) -> None:
             if plan.rename_from.resolve() != plan.rename_to.resolve():
                 plan.rename_to.parent.mkdir(parents=True, exist_ok=True)
                 plan.rename_from.rename(plan.rename_to)
-                print(f"  renamed: {plan.rename_from.name}  ->  {plan.rename_to.name}  ({plan.arena_id})")
+                print(
+                    f"  renamed: {plan.rename_from.name}  ->  "
+                    f"{plan.rename_to.name}  ({plan.arena_id})"
+                )
                 rename_count += 1
     print(f"\nRenamed {rename_count} files.")
 

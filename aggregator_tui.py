@@ -4,12 +4,13 @@ Launch via:  aggt
 Requires:    pip install textual
 """
 
+# ruff: noqa: E402 — imports after sys.path.insert are intentional
+
 from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
-from typing import ClassVar
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -32,6 +33,15 @@ from textual.widgets import (
 _PROJECT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_PROJECT_DIR))
 
+from core.arena import arena_filenames  # noqa: E402
+from core.counter import count_tokens
+from core.judge import (
+    archive_model_responses,
+    build_compare_markdown,
+    collect_model_responses,
+    ensure_model_templates,
+    generate_compare_template,
+)
 from core.parser import (  # noqa: E402
     aggregate_files,
     find_project_root,
@@ -41,15 +51,6 @@ from core.parser import (  # noqa: E402
     read_file_entries,
     read_file_paths,
     should_ignore,
-)
-from core.arena import arena_filenames, arena_model_filename  # noqa: E402
-from core.counter import count_tokens
-from core.judge import (
-    archive_model_responses,
-    build_compare_markdown,
-    collect_model_responses,
-    ensure_model_templates,
-    generate_compare_template,
 )
 
 _FILES_TXT = _PROJECT_DIR / "files.txt"
@@ -192,7 +193,10 @@ class APIKeyModal(ModalScreen[str | type(None)]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="api-key-dialog"):
-            yield Label("GEMINI_API_KEY is missing.\nPlease enter it below to run the AI Judge:", id="api-key-label")
+            yield Label(
+                "GEMINI_API_KEY is missing.\nPlease enter it below to run the AI Judge:",
+                id="api-key-label",
+            )
             yield Input(placeholder="AIza...", id="api-key-input", password=True)
             yield Button("Submit", variant="success", id="btn-submit-key")
             yield Button("Cancel", variant="error", id="btn-cancel-key")
@@ -462,7 +466,7 @@ class AggregatorTUI(App[None]):
             scroll.mount(Label(str(path)))
 
         self._queue_count = len(paths)
-        
+
         # Trigger async token estimation
         self._async_estimate_queue_tokens()
 
@@ -471,39 +475,43 @@ class AggregatorTUI(App[None]):
         """Estimate tokens and chars for the current queue."""
         if not _FILES_TXT.is_file():
             return
-            
+
         try:
             entries = read_file_entries(_FILES_TXT)
         except Exception:
             return
 
         total_chars = 0
-        
+
         for path, line_ranges, _ in entries:
             try:
                 if not path.is_file():
                     continue
                 content = path.read_text(encoding="utf-8")
-                
+
                 if line_ranges is not None:
                     from core.parser import stream_file_content
                     content = "".join(stream_file_content(path, line_ranges))
-                    
+
                 total_chars += len(content)
             except Exception:
                 pass
 
         total_tokens = count_tokens("a" * total_chars) if total_chars else 0
-        
+
         title = self.query_one("#queue-title", Static)
-        self.call_from_thread(title.update, f"📋  Queue  ({self._queue_count} files | ~{total_tokens:,} tokens | ~{total_chars:,} chars)")
+        self.call_from_thread(
+            title.update,
+            f"📋  Queue  ({self._queue_count} files | ~{total_tokens:,} tokens "
+            f"| ~{total_chars:,} chars)",
+        )
 
     @on(Checkbox.Changed)
     def handle_checkbox(self, event: Checkbox.Changed) -> None:
         """Add or remove a file from files.txt when checked/unchecked."""
         if self._suppress_checkbox_events:
             return
-            
+
         # Ignore non-TreeEntry checkboxes (like our new controls)
         if not isinstance(event.checkbox, TreeEntry):
             return
@@ -551,8 +559,13 @@ class AggregatorTUI(App[None]):
             resolved_root = root or self._detect_root() or _PROJECT_DIR
 
             # Resolve arena directory
-            from core.parser import load_settings, resolve_output_dir, resolve_arena_dir
-            from core.parser import migrate_to_per_file_folders, migrate_to_flat_layout
+            from core.parser import (
+                load_settings,
+                migrate_to_flat_layout,
+                migrate_to_per_file_folders,
+                resolve_arena_dir,
+                resolve_output_dir,
+            )
             settings = load_settings(resolved_root)
             patterns = load_ignore_patterns(resolved_root, settings)
             output_dir = resolve_output_dir(resolved_root, settings)
@@ -578,7 +591,10 @@ class AggregatorTUI(App[None]):
 
             entries = read_file_entries(_FILES_TXT)
             aggregate_files(entries, arena_path, root)
-            self.log_message(f"[ok] arena written ({len(paths)} file(s)) to {arena_path.name}.", "success")
+            self.log_message(
+                f"[ok] arena written ({len(paths)} file(s)) to {arena_path.name}.",
+                "success",
+            )
 
             # v3-prefixed flat layout: prompt/A/B live directly in arena_dir.
             prompt_file = filenames["prompt"]
@@ -586,7 +602,7 @@ class AggregatorTUI(App[None]):
                 prompt_file.touch()
             model_count = settings.get("model_count", 2)
             _ = ensure_model_templates(arena_dir, model_count)
-            
+
             run_judge = self.query_one("#cb-judge", Checkbox).value
             if run_judge:
                 self._check_and_run_judge(root, arena_dir)
@@ -606,7 +622,7 @@ class AggregatorTUI(App[None]):
             load_dotenv(Path.cwd())
             load_dotenv(_PROJECT_DIR)
             api_key = os.environ.get("GEMINI_API_KEY")
-            
+
         if not api_key:
             self.call_from_thread(self._prompt_for_key_and_run, root, arena_dir)
         else:
@@ -622,11 +638,11 @@ class AggregatorTUI(App[None]):
                     self.log_message("[key] API key saved to .env", "success")
                 except Exception as e:
                     self.log_message(f"[error] Failed to save key: {e}", "warning")
-                    
+
                 self._run_judge_thread(root, key, arena_dir)
             else:
                 self.log_message("[judge] API key is required to run the AI Judge.", "warning")
-                
+
         self.app.push_screen(APIKeyModal(), check_key)
 
     @work(exclusive=True)
@@ -652,14 +668,19 @@ class AggregatorTUI(App[None]):
                 self.log_message(f"[ok] Blank template written to {compare_file.name}.", "success")
                 return
 
-            self.log_message(f"[judge] Found {len(models_data)} models. Requesting Gemini evaluation...", "action")
+            self.log_message(
+                f"[judge] Found {len(models_data)} models. Requesting Gemini evaluation...",
+                "action",
+            )
             from core.judge import GeminiJudge
             judge = GeminiJudge()
             verdict = await judge.evaluate(prompt, models_data, api_key)
 
             compact = self.query_one("#cb-compact", Checkbox).value
 
-            build_compare_markdown(prompt, models_data, compare_file, verdict=verdict, compact=compact)
+            build_compare_markdown(
+                prompt, models_data, compare_file, verdict=verdict, compact=compact,
+            )
 
             # --- Req 5: archiving workflow (local to this arena) ---
             archive = settings.get("archive", False)

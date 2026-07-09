@@ -39,11 +39,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from core.parser import (  # noqa: E402
-    ArenaDirective,
     build_arena_plan,
     discover_files_txt_with_directives,
 )
-
 
 _ARENA_NUMBER_RE = re.compile(r"^(\d{3})-(.+)$")
 
@@ -195,7 +193,10 @@ def compute_renames(
     return renames, skipped, errors
 
 
-def _print_plan(plan: dict, renames: list[tuple[Path, Path]], skipped: list[str], errors: list[str], existing_count: int) -> None:
+def _print_plan(
+    plan: dict, renames: list[tuple[Path, Path]],
+    skipped: list[str], errors: list[str], existing_count: int,
+) -> None:
     print("=" * 72)
     print("RENUMBER ARENAS — plan")
     print("=" * 72)

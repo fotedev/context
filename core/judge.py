@@ -4,19 +4,19 @@ discovery, archiving, and comparison output generation.
 """
 from __future__ import annotations
 
-import os
-import sys
+import abc
+import asyncio
 import json
+import os
 import re
 import shutil
+import sys
 import urllib.error
 import urllib.request
 from datetime import datetime
+from http.client import HTTPException, HTTPResponse
 from pathlib import Path
 from typing import cast
-from http.client import HTTPException, HTTPResponse
-import abc
-import asyncio
 
 # ---------------------------------------------------------------------------
 # .env loading
@@ -96,7 +96,7 @@ def get_api_key(root_dir: Path | None = None) -> str | None:
 
 class BaseJudge(abc.ABC):
     """Abstract base class defining the contract for AI Judges."""
-    
+
     @abc.abstractmethod
     async def evaluate(
         self, prompt: str, models_data: list[dict[str, str]], api_key: str
@@ -106,12 +106,12 @@ class BaseJudge(abc.ABC):
 
 class GeminiJudge(BaseJudge):
     """Gemini-based AI Judge implementation using non-blocking threaded I/O."""
-    
+
     async def evaluate(
         self, prompt: str, models_data: list[dict[str, str]], api_key: str
     ) -> str:
         eval_prompt = self._build_prompt(prompt, models_data)
-        
+
         url = (
             "https://generativelanguage.googleapis.com/v1beta/"
             f"models/gemini-2.5-flash:generateContent?key={api_key}"
@@ -127,7 +127,7 @@ class GeminiJudge(BaseJudge):
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        
+
         def _blocking_request() -> str:
             print("Sending comparison request to Gemini Flash API...")
             try:

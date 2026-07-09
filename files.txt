@@ -7,11 +7,7 @@ C:\programming\Python\Projects\context\core\judge.py
 C:\programming\Python\Projects\context\SKILL.md
 C:\programming\Python\Projects\context\README.md
 C:\programming\Python\Projects\context\features.md
-# problems
-C:\programming\Python\Projects\context\judge.py.log
-C:\programming\Python\Projects\context\parser.py.log
-C:\programming\Python\Projects\context\counter.py.log
-C:\programming\Python\Projects\context\aggregator.py.log
+
 C:\programming\Python\Projects\context\aggregator_gui.py
 C:\programming\Python\Projects\context\arena-context\SKILL.md
 C:\programming\Python\Projects\context\core\__init__.py

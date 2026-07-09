@@ -1,4 +1,3 @@
-# & C:\Users\FOTE\AppData\Local\Programs\Python\Python314\python.exe c:/programming/Python/Projects/context/aggregator.py
 """File Aggregator — consolidates source files and generates project trees.
 
 Outputs (written into the configurable output folder, e.g. ``context_output/``):
@@ -16,8 +15,8 @@ Configuration precedence (Req 4):
 Runs completely silently (non-interactive) by default.
 """
 
-import sys
 import asyncio
+import sys
 from pathlib import Path
 from typing import cast
 
@@ -31,41 +30,40 @@ if hasattr(sys.stderr, 'reconfigure'):
 
 
 # Import from core module package (for CLI execution and backwards compatibility with TUI/GUI)
-from core.parser import (
-    aggregate_files,
-    find_project_root,
-    generate_tree,
-    load_ignore_patterns,
-    initialize_environment,
-    read_file_entries,
-    resolve_output_dir,
-    resolve_models_dir,
-    discover_files_txt_with_directives,
-    resolve_arena_dir,
-    load_settings,
-    save_settings,
-    display_settings,
-    migrate_old_outputs,
-    migrate_to_per_file_folders,
-    migrate_to_flat_layout,
-    sync_paste_attachments,
-    build_arena_plan,
-    ArenaAssignment,
-    ArenaDirective,
-    get_latest_state,
-    write_state_breadcrumb,
-)
+from core.arena import arena_filenames
 from core.counter import count_tokens
 from core.judge import (
-    collect_model_responses,
+    GeminiJudge,
+    archive_model_responses,
     build_compare_markdown,
+    collect_model_responses,
+    ensure_model_templates,
     generate_compare_template,
     get_api_key,
-    archive_model_responses,
-    ensure_model_templates,
-    GeminiJudge,
 )
-from core.arena import arena_filenames, arena_model_filename
+from core.parser import (
+    ArenaAssignment,
+    ArenaDirective,
+    aggregate_files,
+    build_arena_plan,
+    discover_files_txt_with_directives,
+    display_settings,
+    find_project_root,
+    generate_tree,
+    get_latest_state,
+    initialize_environment,
+    load_ignore_patterns,
+    load_settings,
+    migrate_old_outputs,
+    migrate_to_flat_layout,
+    migrate_to_per_file_folders,
+    read_file_entries,
+    resolve_arena_dir,
+    resolve_output_dir,
+    save_settings,
+    sync_paste_attachments,
+    write_state_breadcrumb,
+)
 
 # ---------------------------------------------------------------------------
 # Interactive prompt helper (Req 4)
@@ -75,9 +73,12 @@ from core.arena import arena_filenames, arena_model_filename
 def _prompt_toggle(prompt: str, default_setting: bool) -> bool:
     """Interactive toggle prompt using Space+Enter / Enter semantics.
 
-    * Pressing ``Enter`` selects the default/settings value.
-    * Pressing ``Space`` then ``Enter`` enables/overrides the option
-      (i.e. flips the value to ``True``).
+    * Pressing ``Enter`` selects the default/settings value (no change).
+    * Pressing ``Space`` then ``Enter`` *flips* the current default
+      (``True → False``, ``False → True``). This keeps each prompt's
+      Enter/Space wording symmetric — callers can phrase the question as
+      either "Enter=yes, Space=no" or "Enter=no, Space=yes" and the
+      behaviour stays consistent.
 
     Args:
         prompt: The question text to display.
@@ -93,9 +94,9 @@ def _prompt_toggle(prompt: str, default_setting: bool) -> bool:
             # Non-interactive terminal — fall back to default.
             return default_setting
 
-        # Space + Enter → override (enable). Enter → default value.
+        # Space + Enter → flip the default. Enter → keep the default.
         if " " in raw:
-            return True
+            return not default_setting
         if raw == "" or raw.strip() == "":
             return default_setting
         # Be lenient: accept y/n too.
@@ -515,7 +516,35 @@ def main() -> None:
         action="store_true",
         help="With --status: print only the next arena number on one line.",
     )
+    _ = parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="Start the local FastAPI server (for the browser extension).",
+    )
+    _ = parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Port for --serve (default: 8765).",
+    )
     args = parser.parse_args()
+
+    # --- --serve: launch the FastAPI server in-process, then exit ---------
+    # Additive — no-argument CLI behaviour is unchanged.
+    if cast(bool, args.serve):
+        import uvicorn
+
+        from gui.server.main import create_app
+        from gui.server.security import generate_pairing_code
+
+        app = create_app()
+        pairing_code = generate_pairing_code()
+        port = cast(int, args.port)
+        print(f"Starting context server on port {port}...")
+        print(f"Pairing code: {pairing_code}")
+        print(f"URL: http://127.0.0.1:{port}")
+        uvicorn.run(app, host="127.0.0.1", port=port)
+        return
 
     # Resolve project root from positional arg or CWD.
     root_str = cast(str | None, args.root)
@@ -550,7 +579,8 @@ def main() -> None:
             print("next_number  : 001")
         print(f"total_arenas : {state['total_arenas']}")
         if state["latest_activity_arena"]:
-            print(f"last_activity: {state['latest_activity_arena']} ({state['latest_activity_time']})")
+            arena = state["latest_activity_arena"]
+            print(f"last_activity: {arena} ({state['latest_activity_time']})")
         print(f"total_inputs : {state['total_inputs']}")
         if state["latest_input"]:
             print(f"latest_input : {state['latest_input']} ({state['latest_input_time']})")
@@ -665,7 +695,7 @@ def main() -> None:
 
         if existing_structure.strip() != live_structure.strip():
             if is_interactive:
-                prompt = "WARNING: Project structure has changed. Would you like to update structure.txt? [Y/n] "
+                prompt = "WARNING: Project structure changed. Update structure.txt? [Y/n] "
                 if _prompt_update_structure(prompt):
                     should_write_structure = True
                 else:
@@ -744,7 +774,9 @@ def main() -> None:
                 if archived:
                     # Re-create fresh templates for the configured model count.
                     _ = ensure_model_templates(arena_dir, model_count)
-                    print(f"[{files_input.name}] Archived {len(archived)} file(s) to {archive_dir}.")
+                    print(
+                        f"[{files_input.name}] Archived {len(archived)} file(s) to {archive_dir}."
+                    )
         except Exception as exc:  # pylint: disable=broad-exception-caught  # noqa: BLE001 — last-resort guard per file
             print(
                 f"ERROR processing {files_input.name}: {exc}",
