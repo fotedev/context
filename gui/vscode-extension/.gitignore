@@ -1,0 +1,14 @@
+# Build artefacts
+out/
+node_modules/
+*.vsix
+
+# IDE
+.vscode/
+
+# Test scaffolding
+.vscode-test/
+
+# OS junk
+.DS_Store
+Thumbs.db

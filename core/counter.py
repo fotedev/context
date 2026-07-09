@@ -58,6 +58,10 @@ def count_lines(path: Path, ranges: list[tuple[int, int]] | None = None) -> int:
             count = 0
             sorted_ranges = sorted(ranges, key=lambda r: r[0])
             for start, end in sorted_ranges:
+                # Inverted range (start > end) — caller passed garbage;
+                # treat as zero-line range instead of crashing.
+                if end < start:
+                    continue
                 start_idx = max(0, start - 1)
                 end_idx = min(total, end)
                 if start_idx < end_idx:

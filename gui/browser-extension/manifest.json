@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Context Tool",
+  "version": "1.0.0",
+  "description": "Browser extension for the Context aggregator tool.",
+  "action": {
+    "default_popup": "src/popup/index.html",
+    "default_title": "Context Tool"
+  },
+  "options_page": "src/options/index.html",
+  "background": {
+    "service_worker": "src/background/service-worker.ts",
+    "type": "module"
+  },
+  "permissions": ["storage", "activeTab", "clipboardRead"],
+  "host_permissions": [
+    "http://127.0.0.1:8765/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://lmarena.ai/*",
+        "https://beta.lmarena.ai/*",
+        "https://chat.lmsys.org/*"
+      ],
+      "js": ["src/content/lmarena.ts"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "public/icons/icon16.png",
+    "48": "public/icons/icon48.png",
+    "128": "public/icons/icon128.png"
+  }
+}

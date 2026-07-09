@@ -1,3 +1,4 @@
+# --- Project artefacts: build outputs, caches, runtime state ---
 structure.txt
 compare-template.bak
 compare_of_compare.txt
@@ -37,3 +38,26 @@ venv/
 # Temp directories
 temp/
 tmp/
+
+# --- GUI / browser-extension build outputs (large, regenerable) ---
+/gui/browser-extension/node_modules
+/gui/browser-extension/dist
+/gui/browser-extension/temp-context
+/gui/dist
+
+# --- Python bytecode caches (recursive) ---
+**/__pycache__/
+*.pyc
+*.pyo
+
+# --- Test artefacts ---
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+.tox/
+
+# --- Editor/OS junk ---
+.DS_Store
+Thumbs.db
+desktop.ini

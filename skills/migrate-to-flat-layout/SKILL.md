@@ -89,3 +89,18 @@ the arena directory and moves the input files into their respective arena folder
 - `.context/inputs/` should be in `.gitignore` after the move, so the legacy
   path does not get re-tracked. The `migrate_inputs.py` script adds this
   entry automatically when the inputs directory is fully drained.
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-07-04 | Initial release — v3 flat layout migration with dry-run, Phase 1-3 flatten/rename/cleanup, input file migration, and gitignore auto-update |
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| Migration script says "Nothing to flatten" but files are not in flat layout | Run `python aggregator.py` once — the tool auto-migrates on every run |
+| Orphan inputs left behind after `migrate_inputs.py` | Orphan inputs are expected when no matching arena exists. Run `python aggregator.py` to create new arenas |
+| Error: "Path does not exist" during flatten | Ensure you are in the project root and `context_output/arenas/` exists |
+| Git shows untracked files after migration | Add `.context/inputs/` to `.gitignore` — the script adds this automatically when inputs dir is fully drained |

@@ -583,7 +583,7 @@ def resolve_output_dir(
     Returns:
         Path to the output directory (created if necessary).
     """
-    dir_name = cli_output or settings.get("output_dir", "context_output")
+    dir_name = cli_output or settings.output.dir
     output_dir = root / str(dir_name)
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
@@ -1076,7 +1076,7 @@ def _cleanup_unprefixed_legacy_files(
     if not prefix.isdigit() or not arena_name:
         return  # arena dir name doesn't follow the NNN-<name> convention
 
-    fmt = str(settings.get("output_format", "md")).lower().lstrip(".")
+    fmt = str(settings.output.format).lower().lstrip(".")
     ext = fmt if fmt in ("md", "txt") else "md"
 
     # (unprefixed_name, prefixed_name) pairs to reconcile. The unprefixed

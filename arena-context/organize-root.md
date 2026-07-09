@@ -70,3 +70,20 @@ The following migrations have already been completed:
 
 Still pending:
 - `./files.txt` exists in root — should be moved to `.context/inputs/`
+
+## Verification
+
+After migration, run the following to verify:
+
+1. `python aggregator.py --status` — confirms the tool finds inputs and shows arena count
+2. `ls context_output/arenas/` — verify arenas contain prefixed files (NNN-*.txt, NNN-context.*, NNN-arena.*)
+3. `cat .context/last_arena.json` — verify state breadcrumb was written with correct next_number
+
+## Rollback Instructions
+
+If migration causes issues:
+
+1. Move files back from `context_output/` to root: `arena.txt`, `structure.txt`, `compare.*`
+2. Move files back from `context_output/models/` to `./models/`
+3. Restore `files.txt` from backup if moved
+4. Revert any `.gitignore` changes

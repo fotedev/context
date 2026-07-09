@@ -1,8 +1,25 @@
-# Core (CLI) - no external dependencies required
-# All standard library: sys, pathlib, re, fnmatch, json, urllib, typing
-
-# Optional: accurate token counting (fallback exists if not installed)
+# Core (CLI) — standard library only by default.
+# Optional: accurate token counting (fallback exists if not installed).
 tiktoken>=0.7.0,<1.0
 
 # TUI only (aggregator_tui.py)
 textual>=0.40.0,<1.0
+
+# ---------------------------------------------------------------------------
+# GUI server (FastAPI) — needed for `python aggregator.py --serve`.
+# Consolidated here so a single `pip install -r requirements.txt` from the
+# repo root is enough to run the server and the browser-extension client.
+# ---------------------------------------------------------------------------
+fastapi>=0.100.0,<1.0
+uvicorn[standard]>=0.23.0
+python-multipart>=0.0.6
+python-dotenv>=1.0.0
+websockets>=11.0
+
+# ---------------------------------------------------------------------------
+# Test suite (developer-only, but bundled at the repo root so CI installs
+# `requirements.txt` then runs `pytest` with no extra steps).
+# ---------------------------------------------------------------------------
+pytest>=8.0
+pytest-asyncio>=0.23
+httpx>=0.27

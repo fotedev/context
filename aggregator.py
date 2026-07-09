@@ -75,9 +75,12 @@ from core.arena import arena_filenames, arena_model_filename
 def _prompt_toggle(prompt: str, default_setting: bool) -> bool:
     """Interactive toggle prompt using Space+Enter / Enter semantics.
 
-    * Pressing ``Enter`` selects the default/settings value.
-    * Pressing ``Space`` then ``Enter`` enables/overrides the option
-      (i.e. flips the value to ``True``).
+    * Pressing ``Enter`` selects the default/settings value (no change).
+    * Pressing ``Space`` then ``Enter`` *flips* the current default
+      (``True → False``, ``False → True``). This keeps each prompt's
+      Enter/Space wording symmetric — callers can phrase the question as
+      either "Enter=yes, Space=no" or "Enter=no, Space=yes" and the
+      behaviour stays consistent.
 
     Args:
         prompt: The question text to display.
@@ -93,9 +96,9 @@ def _prompt_toggle(prompt: str, default_setting: bool) -> bool:
             # Non-interactive terminal — fall back to default.
             return default_setting
 
-        # Space + Enter → override (enable). Enter → default value.
+        # Space + Enter → flip the default. Enter → keep the default.
         if " " in raw:
-            return True
+            return not default_setting
         if raw == "" or raw.strip() == "":
             return default_setting
         # Be lenient: accept y/n too.
@@ -515,7 +518,34 @@ def main() -> None:
         action="store_true",
         help="With --status: print only the next arena number on one line.",
     )
+    _ = parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="Start the local FastAPI server (for the browser extension).",
+    )
+    _ = parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Port for --serve (default: 8765).",
+    )
     args = parser.parse_args()
+
+    # --- --serve: launch the FastAPI server in-process, then exit ---------
+    # Additive — no-argument CLI behaviour is unchanged.
+    if cast(bool, args.serve):
+        import uvicorn
+        from gui.server.main import create_app
+        from gui.server.security import generate_pairing_code
+
+        app = create_app()
+        pairing_code = generate_pairing_code()
+        port = cast(int, args.port)
+        print(f"Starting context server on port {port}...")
+        print(f"Pairing code: {pairing_code}")
+        print(f"URL: http://127.0.0.1:{port}")
+        uvicorn.run(app, host="127.0.0.1", port=port)
+        return
 
     # Resolve project root from positional arg or CWD.
     root_str = cast(str | None, args.root)

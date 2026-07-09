@@ -1,0 +1,104 @@
+{
+  "name": "context-tool-vscode",
+  "displayName": "Context Tool",
+  "description": "VS Code companion for the Context aggregator — start the local server, manage inputs, run an arena directly from the editor.",
+  "version": "0.1.0",
+  "publisher": "context-tool",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fote/context-aggregator.git",
+    "directory": "gui/vscode-extension"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "context",
+    "aggregator",
+    "lmarena",
+    "pairwise",
+    "evaluation"
+  ],
+  "activationEvents": [
+    "onCommand:contextTool.startServer",
+    "onCommand:contextTool.stopServer",
+    "onCommand:contextTool.pair",
+    "onCommand:contextTool.runAggregation",
+    "onCommand:contextTool.openSettings",
+    "workspaceContains:files.txt"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "contextTool.startServer",
+        "title": "Context Tool: Start Local Server",
+        "category": "Context Tool"
+      },
+      {
+        "command": "contextTool.stopServer",
+        "title": "Context Tool: Stop Local Server",
+        "category": "Context Tool"
+      },
+      {
+        "command": "contextTool.pair",
+        "title": "Context Tool: Pair With Server",
+        "category": "Context Tool"
+      },
+      {
+        "command": "contextTool.runAggregation",
+        "title": "Context Tool: Run Aggregation",
+        "category": "Context Tool"
+      },
+      {
+        "command": "contextTool.openSettings",
+        "title": "Context Tool: Open Settings",
+        "category": "Context Tool"
+      }
+    ],
+    "configuration": {
+      "title": "Context Tool",
+      "properties": {
+        "contextTool.server.host": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "Loopback host for the local Context Tool server."
+        },
+        "contextTool.server.port": {
+          "type": "number",
+          "default": 8765,
+          "description": "Port the local Context Tool server listens on (must match the browser-extension manifest host_permissions)."
+        },
+        "contextTool.server.autoStart": {
+          "type": "boolean",
+          "default": false,
+          "description": "Start the server automatically when a workspace containing files.txt is opened."
+        },
+        "contextTool.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "Python interpreter used to launch aggregator.py --serve."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}
