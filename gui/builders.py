@@ -14,8 +14,8 @@ callbacks when assembling the window.
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import scrolledtext, ttk
-from typing import Callable
+from tkinter import filedialog, messagebox, scrolledtext, ttk
+from typing import Callable, Optional
 
 from gui.log_panel import LogPanel
 from gui.theme import (
@@ -26,10 +26,14 @@ from gui.theme import (
     _BTN_TEXT,
     _FG,
     _FG_DIM,
+    _FONT_SMALL_KEY,
     _GREEN,
     _ORANGE,
     _RED,
+    _TEAL,
 )
+from gui.theme import _BG_HOVER, _MAUVE, _YELLOW
+
 
 # Font-key constants used by builders; kept as a tiny lookup to mirror
 # the legacy behaviour. ``build_fonts`` returns a dict mapping these

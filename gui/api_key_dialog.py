@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import tkinter as tk
+from typing import Optional
 
 from gui.theme import (
     _ACCENT,
@@ -139,16 +140,15 @@ class ApiKeyDialog(tk.Toplevel):
 
 
 def api_key_status_text(
-    project_dir, cwd: object | None = None
+    project_dir, cwd: Optional[object] = None
 ) -> str:
     """Return a one-line status string reflecting whether a key is loaded.
 
     Mirrors the legacy ``_api_key_status_text``. *project_dir* is the
     aggregator install dir (resolved by the caller).
     """
-    from pathlib import Path
-
     from core.judge import load_dotenv
+    from pathlib import Path
 
     load_dotenv(project_dir)
     if cwd is not None:

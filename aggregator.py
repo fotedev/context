@@ -1,3 +1,4 @@
+# & C:\Users\FOTE\AppData\Local\Programs\Python\Python314\python.exe c:/programming/Python/Projects/context/aggregator.py
 """File Aggregator — consolidates source files and generates project trees.
 
 Outputs (written into the configurable output folder, e.g. ``context_output/``):
@@ -15,8 +16,8 @@ Configuration precedence (Req 4):
 Runs completely silently (non-interactive) by default.
 """
 
-import asyncio
 import sys
+import asyncio
 from pathlib import Path
 from typing import cast
 
@@ -30,40 +31,41 @@ if hasattr(sys.stderr, 'reconfigure'):
 
 
 # Import from core module package (for CLI execution and backwards compatibility with TUI/GUI)
-from core.arena import arena_filenames
-from core.counter import count_tokens
-from core.judge import (
-    GeminiJudge,
-    archive_model_responses,
-    build_compare_markdown,
-    collect_model_responses,
-    ensure_model_templates,
-    generate_compare_template,
-    get_api_key,
-)
 from core.parser import (
-    ArenaAssignment,
-    ArenaDirective,
     aggregate_files,
-    build_arena_plan,
-    discover_files_txt_with_directives,
-    display_settings,
     find_project_root,
     generate_tree,
-    get_latest_state,
-    initialize_environment,
     load_ignore_patterns,
-    load_settings,
-    migrate_old_outputs,
-    migrate_to_flat_layout,
-    migrate_to_per_file_folders,
+    initialize_environment,
     read_file_entries,
-    resolve_arena_dir,
     resolve_output_dir,
+    resolve_models_dir,
+    discover_files_txt_with_directives,
+    resolve_arena_dir,
+    load_settings,
     save_settings,
+    display_settings,
+    migrate_old_outputs,
+    migrate_to_per_file_folders,
+    migrate_to_flat_layout,
     sync_paste_attachments,
+    build_arena_plan,
+    ArenaAssignment,
+    ArenaDirective,
+    get_latest_state,
     write_state_breadcrumb,
 )
+from core.counter import count_tokens
+from core.judge import (
+    collect_model_responses,
+    build_compare_markdown,
+    generate_compare_template,
+    get_api_key,
+    archive_model_responses,
+    ensure_model_templates,
+    GeminiJudge,
+)
+from core.arena import arena_filenames, arena_model_filename
 
 # ---------------------------------------------------------------------------
 # Interactive prompt helper (Req 4)
@@ -533,7 +535,6 @@ def main() -> None:
     # Additive — no-argument CLI behaviour is unchanged.
     if cast(bool, args.serve):
         import uvicorn
-
         from gui.server.main import create_app
         from gui.server.security import generate_pairing_code
 
@@ -579,8 +580,7 @@ def main() -> None:
             print("next_number  : 001")
         print(f"total_arenas : {state['total_arenas']}")
         if state["latest_activity_arena"]:
-            arena = state["latest_activity_arena"]
-            print(f"last_activity: {arena} ({state['latest_activity_time']})")
+            print(f"last_activity: {state['latest_activity_arena']} ({state['latest_activity_time']})")
         print(f"total_inputs : {state['total_inputs']}")
         if state["latest_input"]:
             print(f"latest_input : {state['latest_input']} ({state['latest_input_time']})")
@@ -695,7 +695,7 @@ def main() -> None:
 
         if existing_structure.strip() != live_structure.strip():
             if is_interactive:
-                prompt = "WARNING: Project structure changed. Update structure.txt? [Y/n] "
+                prompt = "WARNING: Project structure has changed. Would you like to update structure.txt? [Y/n] "
                 if _prompt_update_structure(prompt):
                     should_write_structure = True
                 else:
@@ -774,9 +774,7 @@ def main() -> None:
                 if archived:
                     # Re-create fresh templates for the configured model count.
                     _ = ensure_model_templates(arena_dir, model_count)
-                    print(
-                        f"[{files_input.name}] Archived {len(archived)} file(s) to {archive_dir}."
-                    )
+                    print(f"[{files_input.name}] Archived {len(archived)} file(s) to {archive_dir}.")
         except Exception as exc:  # pylint: disable=broad-exception-caught  # noqa: BLE001 — last-resort guard per file
             print(
                 f"ERROR processing {files_input.name}: {exc}",

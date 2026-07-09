@@ -8,7 +8,11 @@ each response is asserted against the TypeScript mirrors in
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+import pytest
+
 
 # ---------------------------------------------------------------------------
 # /health  (public — no auth)

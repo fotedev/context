@@ -43,7 +43,7 @@ import json
 import logging
 import re
 import sys
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -709,7 +709,7 @@ def save_settings(root: Path, settings: Settings) -> None:
     """
     context_dir = root / ".context"
     context_dir.mkdir(parents=True, exist_ok=True)
-    context_dir / "settings.json"
+    settings_path = context_dir / "settings.json"
     _save_nested_dict(root, settings.to_dict())
 
 

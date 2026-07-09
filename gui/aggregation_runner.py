@@ -22,7 +22,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 from core.arena import (
     ArenaAssignment,
@@ -52,7 +52,9 @@ from core.parser import (
     read_file_entries,
     resolve_output_dir,
 )
+
 from gui.util import assert_writable
+
 
 logger = logging.getLogger("gui.aggregation")
 
@@ -75,10 +77,10 @@ def resolve_api_key(
     project_root: Path,
     tool_root: Path,
     cwd: Path,
-    prompt_fn: Callable[[], str | None] | None = None,
-    save_fn: Callable[[str], None] | None = None,
+    prompt_fn: Optional[Callable[[], Optional[str]]] = None,
+    save_fn: Optional[Callable[[str], None]] = None,
     wait_timeout: float = 120.0,
-) -> str | None:
+) -> Optional[str]:
     """Look up the Gemini API key, falling back to *prompt_fn* if needed.
 
     Mirrors the legacy ``_resolve_api_key_for_thread`` helper: it first
@@ -111,7 +113,7 @@ def resolve_api_key(
     if prompt_fn is None:
         return None
 
-    holder: list[str | None] = [None]
+    holder: list[Optional[str]] = [None]
     ready = threading.Event()
 
     def _show() -> None:
@@ -152,8 +154,8 @@ def run_aggregation(
     step: StepFn,
     set_status: StatusFn,
     cancel_requested: CancelFn,
-    api_key_provider: Callable[[], str | None] | None = None,
-    api_key_save: Callable[[str], None] | None = None,
+    api_key_provider: Optional[Callable[[], Optional[str]]] = None,
+    api_key_save: Optional[Callable[[str], None]] = None,
 ) -> dict[str, object]:
     """Run the full aggregation pipeline in the calling thread.
 
@@ -283,12 +285,9 @@ def run_aggregation(
             n_important = sum(1 for _, r, i in entries if r is not None and i)
 
             summary_parts: list[str] = []
-            if n_full:
-                summary_parts.append(f"{n_full} file(s)")
-            if n_snippets:
-                summary_parts.append(f"{n_snippets} snippet(s)")
-            if n_important:
-                summary_parts.append(f"{n_important} structure(s)")
+            if n_full:      summary_parts.append(f"{n_full} file(s)")
+            if n_snippets:  summary_parts.append(f"{n_snippets} snippet(s)")
+            if n_important: summary_parts.append(f"{n_important} structure(s)")
             log(
                 f"[{files_input.name}] Queue: {' + '.join(summary_parts)}",
                 "info",
@@ -360,7 +359,7 @@ def run_aggregation(
             )
 
             # ── Step 6: Gemini AI Judge (optional) ─────────────────────────
-            verdict: str | None = None
+            verdict: Optional[str] = None
             if gemini_judge:
                 if cancel_requested():
                     break
@@ -368,7 +367,7 @@ def run_aggregation(
                     f"[{files_input.name}] Running Gemini AI Judge "
                     "(may take up to 45s) …"
                 )
-                api_key: str | None = None
+                api_key: Optional[str] = None
                 if api_key_provider is not None:
                     api_key = api_key_provider()
 

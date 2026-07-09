@@ -19,11 +19,11 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from core.parser import read_file_entries
+
 
 logger = logging.getLogger("gui.queue")
 

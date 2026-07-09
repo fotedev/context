@@ -12,18 +12,18 @@ Response shapes (finalised here, mirrored in ``shared/types.ts``):
   * ``POST /api/run``     → ``{run_id, arena_number, arena_path, warnings}``
 """
 
-import asyncio
-import json
-import logging
 import os
-import shutil
 import sys
+import json
+import shutil
+import asyncio
+import logging
 import time
 import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
@@ -32,21 +32,21 @@ TOOL_ROOT = Path(__file__).resolve().parents[2]
 if str(TOOL_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOL_ROOT))
 
-import core.pipeline as pipeline_mod  # noqa: E402
-from gui.server.launcher import (  # noqa: E402
-    bootstrap_env,
-    get_gemini_key,
-    get_project_root,
-    set_gemini_key,
-)
-from gui.server.logging_setup import configure_logging  # noqa: E402
 from gui.server.security import (  # noqa: E402
+    generate_pairing_code,
+    verify_pairing_code,
     enforce_loopback,
     get_current_token,
-    verify_pairing_code,
 )
-from gui.server.ws import manager
-from gui.server.ws import router as ws_router  # noqa: E402
+from gui.server.launcher import (  # noqa: E402
+    get_project_root,
+    bootstrap_env,
+    get_gemini_key,
+    set_gemini_key,
+)
+from gui.server.ws import router as ws_router, manager  # noqa: E402
+from gui.server.logging_setup import configure_logging  # noqa: E402
+import core.pipeline as pipeline_mod  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Logging (Task 3 — unified structured logging)

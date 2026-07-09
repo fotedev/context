@@ -40,7 +40,7 @@ os.environ.setdefault("PYTHONHASHSEED", "0")
 
 
 @pytest.fixture
-def fake_settings() -> Settings:
+def fake_settings() -> "Settings":
     """Default :class:`core.settings.Settings` instance.
 
     Tests should derive modified copies via ``dataclasses.replace`` and
@@ -87,7 +87,7 @@ def reset_security_state() -> Iterator[None]:
 def fastapi_client(
     tmp_project_root: Path,
     reset_security_state: None,
-) -> Iterator[TestClient]:
+) -> Iterator["TestClient"]:
     """A ``TestClient`` bound to a fresh app instance.
 
     The TestClient connects from a local socket, so the loopback middleware
@@ -95,9 +95,7 @@ def fastapi_client(
     bearer token — see :func:`pairing_token`.
     """
     from fastapi.testclient import TestClient
-
-    from gui.server import launcher
-    from gui.server import main as server_main
+    from gui.server import launcher, main as server_main
 
     # Force get_project_root() to return the test's tmp_path — otherwise the
     # real repo root is detected via walking up from CWD, and settings would

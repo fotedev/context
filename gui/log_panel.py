@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import scrolledtext, ttk
+from typing import Optional
 
-from gui.theme import configure_log_tags
+from gui.theme import _BG_ENTRY, _BG_PANEL, _FG, _FG_DIM, configure_log_tags
 
 
 class LogPanel:
@@ -33,9 +34,9 @@ class LogPanel:
         self,
         *,
         master: tk.Misc,
-        log_widget: scrolledtext.ScrolledText | None = None,
-        status_var: tk.StringVar | None = None,
-        progress: ttk.Progressbar | None = None,
+        log_widget: Optional[scrolledtext.ScrolledText] = None,
+        status_var: Optional[tk.StringVar] = None,
+        progress: Optional[ttk.Progressbar] = None,
     ) -> None:
         # If widgets are not supplied (most callers pre-create them in
         # the statusbar builder), just remember handles — the GUI can
@@ -46,15 +47,15 @@ class LogPanel:
         self._master = master
 
     @property
-    def log_widget(self) -> scrolledtext.ScrolledText | None:
+    def log_widget(self) -> Optional[scrolledtext.ScrolledText]:
         return self._log
 
     @property
-    def status_var(self) -> tk.StringVar | None:
+    def status_var(self) -> Optional[tk.StringVar]:
         return self._status_var
 
     @property
-    def progress(self) -> ttk.Progressbar | None:
+    def progress(self) -> Optional[ttk.Progressbar]:
         return self._progress
 
     # The standard ``gui.theme.configure_log_tags`` is what registers
