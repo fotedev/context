@@ -40,7 +40,7 @@ import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 # We import lazily inside functions to avoid circular imports — settings
 # imports nothing from us, but parser/discovery/judge/arena are stable.
@@ -73,7 +73,7 @@ class PipelineResult:
     output_format: str
     entries_processed: int = 0
     total_lines: int = 0
-    token_count: Optional[int] = None
+    token_count: int | None = None
     models_evaluated: int = 0
     judge_used: bool = False
     warnings: list[str] = field(default_factory=list)
@@ -86,7 +86,7 @@ class PipelineResult:
 
 
 def make_async_bridge(
-    send_fn: Callable[[str, str, str, float], "asyncio.Future[None]"],
+    send_fn: Callable[[str, str, str, float], asyncio.Future[None]],
     loop: asyncio.AbstractEventLoop,
 ) -> ProgressCallback:
     """Build a synchronous progress callback that schedules events on *loop*.
@@ -143,9 +143,9 @@ def _apply_overrides(settings_dict: dict[str, object]) -> None:
 
 
 def merge_overrides(
-    base: "Settings",  # type: ignore[name-defined]  # noqa: F821
+    base: Settings,  # type: ignore[name-defined]  # noqa: F821
     flat_overrides: dict[str, object],
-) -> "Settings":  # type: ignore[name-defined]  # noqa: F821
+) -> Settings:  # type: ignore[name-defined]  # noqa: F821
     """Apply *flat_overrides* onto *base* using the canonical flat→nested map.
 
     The payload from ``POST /api/run`` carries legacy flat keys
@@ -219,7 +219,7 @@ def merge_overrides(
 
 
 def _emit(
-    progress: Optional[ProgressCallback],
+    progress: ProgressCallback | None,
     stage: str,
     level: str,
     msg: str,
@@ -242,14 +242,14 @@ def _emit(
 def run_pipeline(
     *,
     project_root: Path,
-    settings: "Settings",  # type: ignore[name-defined]  # noqa: F821
+    settings: Settings,  # type: ignore[name-defined]  # noqa: F821
     input_path: Path,
     arena_dir: Path,
     output_format: str,
     model_count: int,
     gemini_judge: bool,
     compact_mode: bool,
-    progress: Optional[ProgressCallback] = None,
+    progress: ProgressCallback | None = None,
 ) -> PipelineResult:
     """Execute the four-phase aggregation pipeline against *arena_dir*.
 
@@ -291,20 +291,20 @@ def run_pipeline(
         it in an HTTP response, or ignore it — the side effects (files
         written) are the contract that matters.
     """
+    from core.arena import arena_filenames
+    from core.counter import count_tokens
+    from core.judge import (
+        GeminiJudge,
+        build_compare_markdown,
+        collect_model_responses,
+        ensure_model_templates,
+        generate_compare_template,
+        get_api_key,
+    )
     from core.parser import (
         aggregate_files,
         read_file_entries,
     )
-    from core.arena import arena_filenames
-    from core.judge import (
-        collect_model_responses,
-        build_compare_markdown,
-        generate_compare_template,
-        ensure_model_templates,
-        get_api_key,
-        GeminiJudge,
-    )
-    from core.counter import count_tokens
 
     started = time.perf_counter()
     result = PipelineResult(
@@ -358,7 +358,7 @@ def run_pipeline(
 
     try:
         entries = read_file_entries(input_path)
-    except FileNotFoundError as exc:
+    except FileNotFoundError:
         msg = f"Input file not found: {input_path}"
         _emit(progress, "read_input", "error", msg, 1.0)
         result.warnings.append(msg)
@@ -472,7 +472,7 @@ def run_pipeline(
     result.models_evaluated = len(models_data)
 
     if models_data:
-        verdict: Optional[str] = None
+        verdict: str | None = None
         if gemini_judge:
             api_key = get_api_key(project_root)
             if api_key:

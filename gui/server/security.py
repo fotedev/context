@@ -9,8 +9,9 @@ The pairing code is printed to stdout when the server starts
 
 import secrets
 import time
-from fastapi import Request, HTTPException, Security
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
+from fastapi import HTTPException, Request, Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 # In-memory stores. Single-process server, so module-level state is fine.
 _pairing_codes: dict[str, float] = {}

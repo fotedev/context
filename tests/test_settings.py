@@ -18,7 +18,6 @@ key-set assertions are clearer than nested traversal.
 
 from __future__ import annotations
 
-import copy
 import dataclasses
 import json
 
@@ -41,7 +40,6 @@ from core.settings import (
     slugify_two_sentences,
     write_default_ignore_if_enabled,
 )
-
 
 # ---------------------------------------------------------------------------
 # Filename helpers (Req 9 / v3+ flat layout)

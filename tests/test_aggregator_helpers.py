@@ -9,12 +9,7 @@ These cover the small, pure helpers that don't require a full CLI run:
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 import aggregator
-
 
 # ---------------------------------------------------------------------------
 # _output_names

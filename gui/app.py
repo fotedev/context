@@ -25,8 +25,8 @@ import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox
-from typing import Any, Callable, Optional, cast
+from tkinter import filedialog, messagebox, ttk
+from typing import Any
 
 # ── Encoding fix for Windows terminals (preserved from the legacy module)
 if hasattr(sys.stdout, "reconfigure"):
@@ -40,19 +40,11 @@ sys.path.insert(0, str(_PROJECT_DIR))
 
 # ── Core imports -------------------------------------------------------
 from core.parser import (  # pyright: ignore[reportMissingImports]
-    find_project_root,
     initialize_environment,
     load_ignore_patterns,
     load_settings,
-    read_file_paths,
     resolve_output_dir,
     save_settings,
-)
-from core.judge import (  # pyright: ignore[reportMissingImports]
-    archive_model_responses,
-    ensure_model_templates,
-    GeminiJudge,
-    load_dotenv,
 )
 
 # ── Decomposed GUI modules --------------------------------------------
@@ -61,7 +53,6 @@ from gui.api_key_dialog import ApiKeyDialog, api_key_status_text, save_api_key_t
 from gui.log_panel import LogPanel
 from gui.paths import PROJECT_DIR
 from gui.theme import build_fonts
-
 
 logger = logging.getLogger("gui.app")
 
@@ -86,8 +77,8 @@ class AggregatorGUI(tk.Tk):
 
     def __init__(
         self,
-        cmd_root: Optional[Path] = None,
-        cmd_output: Optional[str] = None,
+        cmd_root: Path | None = None,
+        cmd_output: str | None = None,
     ) -> None:
         super().__init__()
         _ = self.title("File Aggregator")
@@ -97,7 +88,7 @@ class AggregatorGUI(tk.Tk):
         _ = self.configure(bg=_BG)
 
         # ----- runtime state -----------------------------------------
-        self._cmd_output: Optional[str] = cmd_output
+        self._cmd_output: str | None = cmd_output
         self._project_root: Path = (
             cmd_root if cmd_root is not None
             else scanner.detect_initial_root(cwd=Path.cwd(), project_dir=PROJECT_DIR)
@@ -347,7 +338,7 @@ class AggregatorGUI(tk.Tk):
 
         root = self._project_root
         settings = load_settings(root)
-        patterns = load_ignore_patterns(root, settings)
+        load_ignore_patterns(root, settings)
 
         # Collect currently-queued resolved paths so the tree can show
         # ✔ markers; preserve the existing behaviour.
@@ -377,7 +368,7 @@ class AggregatorGUI(tk.Tk):
         # by reconstructing the parent / child relationship from
         # consecutive depth changes).
         prev_depth_to_iid: dict[int, str] = {0: ""}
-        prev_node: Optional[scanner.TreeNode] = None
+        prev_node: scanner.TreeNode | None = None
         for node in nodes:
             label = (
                 f"📁  {node.path.name}" if node.is_dir
@@ -509,9 +500,9 @@ class AggregatorGUI(tk.Tk):
         set_status = self._log_panel.set_status
         cancel_fn = lambda: self._cancel_requested  # noqa: E731
 
-        def _api_key_prompt_blocking() -> Optional[str]:
+        def _api_key_prompt_blocking() -> str | None:
             """Resolve the API key — blocking on a thread-safe UI dialog."""
-            result_holder: list[Optional[str]] = [None]
+            result_holder: list[str | None] = [None]
             ready = threading.Event()
 
             def _show() -> None:
@@ -568,8 +559,8 @@ class AggregatorGUI(tk.Tk):
 
 
 def run_gui(
-    cmd_root: Optional[Path] = None,
-    cmd_output: Optional[str] = None,
+    cmd_root: Path | None = None,
+    cmd_output: str | None = None,
 ) -> None:
     """Construct :class:`AggregatorGUI` and enter the Tk main loop."""
     app = AggregatorGUI(cmd_root=cmd_root, cmd_output=cmd_output)

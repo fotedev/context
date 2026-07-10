@@ -21,9 +21,9 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional
 
 from core.parser import (
     find_project_root,
@@ -35,7 +35,6 @@ from core.parser import (
 # Local imports must keep working regardless of which module imports
 # this one — same sys.path bootstrap the legacy script used.
 from gui.paths import PROJECT_DIR as _PROJECT_DIR
-
 
 logger = logging.getLogger("gui.scanner")
 
@@ -172,8 +171,8 @@ def _walk(
 
 def detect_initial_root(
     *,
-    cwd: Optional[Path] = None,
-    project_dir: Optional[Path] = None,
+    cwd: Path | None = None,
+    project_dir: Path | None = None,
 ) -> Path:
     """Best-effort bootstrap for the GUI's project root.
 

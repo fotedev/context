@@ -85,7 +85,7 @@ class TestWebsocketEndpoint:
 
     @pytest.mark.asyncio
     async def test_ping_replies_with_pong(self) -> None:
-        from gui.server.ws import websocket_endpoint, manager
+        from gui.server.ws import manager, websocket_endpoint
 
         ws = FakeWebSocket()
 

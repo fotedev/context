@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 
 class TestBootstrapEnv:
     def test_creates_env_if_missing(self, tmp_path: Path, monkeypatch) -> None:

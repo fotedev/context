@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from core.arena import (
-    ArenaAssignment,
     ArenaDirective,
     arena_filenames,
     arena_model_filename,
@@ -19,7 +18,6 @@ from core.arena import (
     parse_target_arena_directive,
     resolve_arena_dir,
 )
-
 
 # ---------------------------------------------------------------------------
 # Directive parser
