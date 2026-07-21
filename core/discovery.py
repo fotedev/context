@@ -15,6 +15,7 @@ from __future__ import annotations
 import datetime as _dt
 import fnmatch
 import functools
+import hashlib
 import json
 import re
 import sys
@@ -236,6 +237,16 @@ def _is_unprefixed_arena_file(
 # ---------------------------------------------------------------------------
 
 
+def _file_hash(path: Path) -> str:
+    """SHA-256 of file content. Used by :func:`discover_files_txt` Phase 2
+    to detect self-copies of inputs already discovered by Phase 1.
+
+    Only called on raw ``*.txt`` inputs (not aggregated outputs), so
+    file size is bounded by the user's input lists, not the project size.
+    """
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def discover_files_txt(
     cwd: Path, root: Path | None = None, settings: dict[str, object] | None = None
 ) -> list[tuple[Path, str]]:
@@ -243,37 +254,56 @@ def discover_files_txt(
 
     Returns ``(file_path, arena_name)`` tuples. Results are deduplicated by
     resolved path so a file is never processed twice even if it matches
-    multiple discovery tiers.
+    multiple discovery sources.
 
-    Three tiers are scanned, in order, and **all** are merged into the
-    returned list (no short-circuit). Each tier is guarded by a
-    non-empty-file check so an empty legacy file never blocks the next
-    tier from running:
+    Inputs are collected in two phases:
 
-    1. **v3 arena-dir scan** (primary, prefix-aware) — for every
-       ``NNN-<name>/`` directory under ``<root>/<output_dir>/arenas/``,
-       the input file is matched **exactly** as
-       ``<prefix>-<arena_name>.txt``. Generic "first non-reserved .txt"
-       matching was deliberately rejected here — that approach was fragile
-       and caused bugs earlier in this project's history (it could pick up
-       stale ``compare.md`` orphans, NOTES files, or unprefixed legacy
-       files).
-    2. **Legacy ``.context/inputs/*.txt``** (v1 style, recursive). Each
-       file becomes one arena; the arena name is derived from the file's
-       relative path under ``inputs_dir`` (e.g. ``UI/AdminPage.txt`` →
-       ``UI-AdminPage``).
-    3. **Legacy CWD ``files.txt`` / ``files_*.txt``** (oldest style).
-       Skipped entirely when the file is missing or empty — this is the
-       bug that previously prevented Tier 1 from running when an empty
-       root-level ``files.txt`` existed.
+    **Phase 1 — Real sources (legacy ``.context/inputs/`` and CWD):**
+    Collected first so their content hashes are available for the
+    self-copy check in Phase 2.
+
+      a. **Legacy ``.context/inputs/*.txt``** (v1 style, recursive).
+         Each file becomes one arena; the arena name is derived from the
+         file's relative path under ``inputs_dir`` (e.g.
+         ``UI/AdminPage.txt`` → ``UI-AdminPage``).
+      b. **Legacy CWD ``files.txt`` / ``files_*.txt``** (oldest style).
+         Skipped entirely when the file is missing or empty — this is the
+         bug that previously prevented discovery when an empty root-level
+         ``files.txt`` existed.
+
+    **Phase 2 — v3 arena-dir scan (the "primary" tier semantically):**
+    For every ``NNN-<name>/`` directory under
+    ``<root>/<output_dir>/arenas/``, the input file is matched **exactly**
+    as ``<prefix>-<arena_name>.txt``. Generic "first non-reserved .txt"
+    matching was deliberately rejected here — that approach was fragile
+    and caused bugs earlier in this project's history (it could pick up
+    stale ``compare.md`` orphans, NOTES files, or unprefixed legacy files).
+
+    Phase 2 runs **last** so it can compare each candidate against the
+    content hashes collected in Phase 1. Matches are skipped as
+    self-copies — these are the auto-generated input copies that
+    :func:`aggregator._process_one` writes into each arena folder, and
+    treating them as fresh inputs would re-create duplicate arena folders
+    on every re-run.
 
     The optional ``# Target Arena:`` directive is parsed lazily by callers
     via :func:`build_arena_plan` (passing a directive lookup built with
     :func:`_safe_read_directive`) so the call sites keep their simple
     ``(Path, str)`` shape.
+
+    Settings:
+        ``skip_tier1_self_copies`` (bool, default ``True``):
+            When True, Phase 2 (v3 arena-dir scan) skips arena inputs
+            whose content matches a real source from Phase 1. Set to
+            ``False`` in settings.json to restore the pre-fix behavior
+            of treating every ``NNN-name/NNN-name.txt`` as a fresh input.
     """
     results: list[tuple[Path, str]] = []
     seen_paths: set[Path] = set()
+    # Content hashes of inputs added by Phase 1. Used by Phase 2
+    # to detect and skip self-copies (the auto-generated input copy
+    # that ``_process_one`` writes into each arena folder).
+    source_hashes: set[str] = set()
 
     def _add(path: Path, name: str) -> None:
         resolved = path.resolve()
@@ -282,26 +312,16 @@ def discover_files_txt(
         seen_paths.add(resolved)
         results.append((path, name))
 
-    # --- Tier 1: v3 arena-dir scan (primary, prefix-aware exact match) -----
-    if root and settings:
-        output_dir_str = str(settings.get("output_dir", "context_output"))
-        arenas_dir = root / output_dir_str / "arenas"
+    # Feature flag. When True (default), Phase 2 skips arena inputs
+    # whose content matches an input already in ``source_hashes``.
+    skip_self_copies: bool = True
+    if settings is not None:
+        flag = settings.get("skip_tier1_self_copies")
+        if isinstance(flag, bool):
+            skip_self_copies = flag
 
-        if arenas_dir.is_dir():
-            for arena_dir in sorted(arenas_dir.iterdir()):
-                if not arena_dir.is_dir() or "-" not in arena_dir.name:
-                    continue
-                prefix, _, arena_name = arena_dir.name.partition("-")
-                if not prefix.isdigit() or not arena_name:
-                    continue
-
-                # Exact expected filename derived from the arena dir name.
-                # No "first non-reserved .txt" heuristics — see docstring.
-                expected_input = arena_dir / f"{prefix}-{arena_name}.txt"
-                if expected_input.is_file() and expected_input.stat().st_size > 0:
-                    _add(expected_input, arena_name)
-
-    # --- Tier 2: legacy .context/inputs/ (v1 style) -----------------------
+    # --- Phase 1a: legacy .context/inputs/ (v1 style) ----------------------
+    # Must run before Phase 2 so its hashes populate ``source_hashes``.
     if root and settings:
         inputs_dir_str = str(settings.get("inputs_dir", ".context/inputs"))
         inputs_dir = root / inputs_dir_str
@@ -317,16 +337,53 @@ def discover_files_txt(
                 except ValueError:
                     arena_name = p.stem
                 _add(p, arena_name)
+                try:
+                    source_hashes.add(_file_hash(p))
+                except OSError:
+                    pass
 
-    # --- Tier 3: legacy CWD files.txt / files_*.txt (oldest style) -------
+    # --- Phase 1b: legacy CWD files.txt / files_*.txt (oldest style) ------
     main = cwd / "files.txt"
     if main.is_file() and main.stat().st_size > 0:
         _add(main, "files")
+        try:
+            source_hashes.add(_file_hash(main))
+        except OSError:
+            pass
 
     for p in sorted(cwd.glob("files_*.txt")):
         if p.is_file() and p.stat().st_size > 0:
             suffix = p.name[len("files_"):-len(".txt")]
             _add(p, f"files_{suffix}")
+            try:
+                source_hashes.add(_file_hash(p))
+            except OSError:
+                pass
+
+    # --- Phase 2: v3 arena-dir scan (primary, prefix-aware exact match) ---
+    # Runs last. Uses ``source_hashes`` to detect self-copies.
+    if root and settings:
+        output_dir_str = str(settings.get("output_dir", "context_output"))
+        arenas_dir = root / output_dir_str / "arenas"
+
+        if arenas_dir.is_dir():
+            for arena_dir in sorted(arenas_dir.iterdir()):
+                if not arena_dir.is_dir() or "-" not in arena_dir.name:
+                    continue
+                prefix, _, arena_name = arena_dir.name.partition("-")
+                if not prefix.isdigit() or not arena_name:
+                    continue
+
+                expected_input = arena_dir / f"{prefix}-{arena_name}.txt"
+                if not (expected_input.is_file() and expected_input.stat().st_size > 0):
+                    continue
+                if skip_self_copies:
+                    try:
+                        if _file_hash(expected_input) in source_hashes:
+                            continue
+                    except OSError:
+                        pass
+                _add(expected_input, arena_name)
 
     return results
 

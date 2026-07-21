@@ -93,6 +93,21 @@ class TestBuildArenaPlan:
         assert [a.arena_number for a in assignments] == [1, 2]
         assert warnings == []
 
+    def test_input_order_does_not_affect_numbering(self, tmp_path: Path) -> None:
+        """build_arena_plan must be deterministic regardless of the order
+        its inputs are passed in. Validates that a discovery-tier reorder
+        (e.g. Tier 2/3 before Tier 1) is safe — explicit and implicit
+        sorting happens inside the function, not in the caller.
+        """
+        inputs = self._paths(tmp_path, ["a.txt", "b.txt"])
+        forward, _ = build_arena_plan(inputs, {})
+        backward, _ = build_arena_plan(list(reversed(inputs)), {})
+        # Same numbers, same order, same names regardless of input order.
+        assert [a.arena_number for a in forward] == [1, 2]
+        assert [a.arena_number for a in backward] == [1, 2]
+        assert [a.arena_name for a in forward] == ["a", "b"]
+        assert [a.arena_name for a in backward] == ["a", "b"]
+
     def test_explicit_number_honoured(self, tmp_path: Path) -> None:
         inputs = self._paths(tmp_path, ["alpha.txt", "beta.txt"])
         directives = {

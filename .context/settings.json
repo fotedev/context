@@ -1,18 +1,37 @@
 {
-  "output_dir": "context_output",
-  "output_format": "md",
-  "model_count": 2,
-  "gemini_judge": false,
-  "compact_mode": false,
-  "archive": true,
-  "archive_dir": "ARCHIVE",
-  "paste_attachments_source_dir": "tmp/paste-attachments",
-  "paste_attachments_enabled": false,
-  "paste_attachments_target_subdir": "tmp/paste-attachments",
-  "respect_target_arena_directive": true,
-  "paste_attachments_copy_mode": "copy",
-  "paste_attachments_date_format": "%Y-%m-%d",
-  "target_arena_directive_prefix": "# Target Arena:",
-  "on_arena_number_conflict": "warn_and_shift",
-  "use_default_ignore": true
+  "output": {
+    "dir": "context_output",
+    "format": "md"
+  },
+  "archive": {
+    "enabled": true,
+    "dir": "ARCHIVE"
+  },
+  "models": {
+    "count": 2
+  },
+  "judge": {
+    "enabled": false
+  },
+  "compact": {
+    "enabled": false
+  },
+  "paste_attachments": {
+    "enabled": false,
+    "source_dir": "tmp/paste-attachments",
+    "target_subdir": "tmp/paste-attachments",
+    "date_format": "%Y-%m-%d",
+    "copy_mode": "copy"
+  },
+  "target_arena": {
+    "respect_directive": true,
+    "directive_prefix": "# Target Arena:",
+    "on_number_conflict": "warn_and_shift"
+  },
+  "ignore": {
+    "use_default": true
+  },
+  "inputs": {
+    "dir": ".context/inputs"
+  }
 }
