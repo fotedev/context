@@ -3,7 +3,7 @@
 > **Status: ✅ COMPLETE** — All phases A–F implemented and verified.
 > Last verified: 2026-07-04.
 >
-> **Goal (الهدف):** Split the bloated `core/parser.py` (≈1673 lines, 3+ mixed
+> **Goal:** Split the bloated `core/parser.py` (≈1673 lines, 3+ mixed
 > concerns) into focused modules **without breaking any existing import**, and
 > add an `agg --status` flag that gives AI agents a tiny, token-cheap snapshot
 > of the project's arena state.
