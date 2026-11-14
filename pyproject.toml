@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "context-aggregator"
 version = "2.6.0"
 description = "File aggregation tool for LMArena blind pairwise model comparisons with CLI, TUI, GUI, and a browser extension"
-readme = "docs/README.md"
+readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
